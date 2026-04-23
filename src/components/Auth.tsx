@@ -33,8 +33,9 @@ export default function Auth({ onLogin, mode = 'user' }: { onLogin: (user: any) 
     try {
       const res = await api.get('/api/auth/google/url');
       window.open(res.data.url, 'google_login', 'width=600,height=700');
-    } catch (err) {
-      alert('Failed to get login URL');
+    } catch (err: any) {
+      const message = err.response?.data?.details || err.response?.data?.error || 'Failed to get login URL';
+      alert(message);
     } finally {
       setLoading(false);
     }

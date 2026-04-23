@@ -15,7 +15,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // SQLite Connection
-const db = new Database('nexus_justice.db');
+const dbPath = process.env.NODE_ENV === 'production' ? path.join('/tmp', 'nexus_justice.db') : 'nexus_justice.db';
+const db = new Database(dbPath);
 
 // Initialize Tables
 db.exec(`
@@ -71,21 +72,41 @@ async function startServer() {
 
   // Google OAuth URL
   app.get('/api/auth/google/url', (req, res) => {
-    const redirectUri = `${process.env.APP_URL || 'http://localhost:3000'}/auth/google/callback`;
-    const url = googleClient.generateAuthUrl({
-      access_type: 'offline',
-      scope: ['https://www.googleapis.com/auth/userinfo.profile', 'https://www.googleapis.com/auth/userinfo.email'],
-      redirect_uri: redirectUri,
-    });
-    res.json({ url });
+    try {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      const appUrl = process.env.APP_URL || process.env.NEXTAUTH_URL || 'http://localhost:3000';
+
+      if (!clientId || !clientSecret) {
+        console.error('Missing Google Client ID or Secret in environment variables');
+        return res.status(400).json({ 
+          error: 'Missing Google Auth configuration.',
+          details: 'Please ensure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set in environment variables.' 
+        });
+      }
+
+      const redirectUri = `${appUrl.replace(/\/$/, '')}/auth/google/callback`;
+      
+      const url = googleClient.generateAuthUrl({
+        access_type: 'offline',
+        scope: ['https://www.googleapis.com/auth/userinfo.profile', 'https://www.googleapis.com/auth/userinfo.email'],
+        redirect_uri: redirectUri,
+      });
+      res.json({ url });
+    } catch (err) {
+      console.error('Error generating Google Auth URL:', err);
+      res.status(500).json({ error: 'Internal server error while generating auth URL' });
+    }
   });
 
   // Google OAuth Callback
   app.get(['/auth/google/callback', '/auth/google/callback/'], async (req, res) => {
     const { code } = req.query;
-    const redirectUri = `${process.env.APP_URL || 'http://localhost:3000'}/auth/google/callback`;
+    const appUrl = process.env.APP_URL || process.env.NEXTAUTH_URL || 'http://localhost:3000';
+    const redirectUri = `${appUrl.replace(/\/$/, '')}/auth/google/callback`;
     
     try {
+      if (!code) throw new Error('No code provided in callback');
       const { tokens } = await googleClient.getToken({
         code: code as string,
         redirect_uri: redirectUri,
