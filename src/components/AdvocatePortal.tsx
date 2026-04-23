@@ -1,0 +1,620 @@
+import { useState, useRef, useEffect, useCallback } from "react";
+import api from '../api';
+
+const Icon = ({ path, size = 20, strokeWidth = 2 }: { path: string | string[], size?: number, strokeWidth?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+    {Array.isArray(path) ? path.map((d, i) => <path key={i} d={d} />) : <path d={path} />}
+  </svg>
+);
+
+const CLIENTS = [
+  { slNo: 1, name: 'Sreedharan K.', phone: '+91 9876543210', courtName: 'District Court, Aluva', caseNumber: 'OS 145/2025', oppAdvocateName: 'Ramesh Menon', nextPostingDate: '2026-03-15', purposeOfPosting: 'Filing Written Statement' },
+  { slNo: 2, name: 'Elena Rodriguez', phone: '+1 555-0199', courtName: 'High Court', caseNumber: 'WP(C) 204/2026', oppAdvocateName: 'Sarah Jenkins', nextPostingDate: '2026-03-20', purposeOfPosting: 'Hearing' },
+  { slNo: 3, name: 'Marcus Thorne', phone: '+1 555-0188', courtName: 'Magistrate Court', caseNumber: 'CC 55/2026', oppAdvocateName: 'David Clark', nextPostingDate: '2026-04-05', purposeOfPosting: 'Evidence' },
+  { slNo: 4, name: 'Sarah Jenkins', phone: '+1 555-0177', courtName: 'Family Court', caseNumber: 'OP 89/2025', oppAdvocateName: 'Priya Sharma', nextPostingDate: '2026-03-10', purposeOfPosting: 'Counseling' },
+  { slNo: 5, name: 'Orbital Tech Corp', phone: '+1 555-0166', courtName: 'Commercial Court', caseNumber: 'CS 12/2026', oppAdvocateName: 'Michael Chang', nextPostingDate: '2026-04-12', purposeOfPosting: 'Framing of Issues' },
+];
+
+const VOICE_RECORDS = [
+  { id: 'H01', client: 'Sreedharan K.', date: '16/02/2026', duration: '3m 4s', summary: 'Property boundary dispute in Aluva. Neighbor encroaching via new fence. Needs interim injunction.' },
+  { id: 'H02', client: 'Elena Rodriguez', date: '15/02/2026', duration: '12m 15s', summary: 'IP theft consultation. Competitor launched identical product. Cease & desist draft requested.' },
+  { id: 'H03', client: 'Marcus Thorne', date: '10/02/2026', duration: '8m 42s', summary: 'Real estate fraud follow-up. New evidence documents provided. Court strategy scheduled.' },
+];
+
+const NOTIFICATIONS = [
+  { id: 1, message: "Welcome to Nexus Justice v3.1. Your affiliate link is ready.", date: "2026-02-27", read: false, type: 'general' },
+  { id: 2, message: "John Doe (555-0192) joined under you — congratulations!", date: "2026-02-27", read: false, type: 'payment' },
+];
+
+const LAW_CATEGORIES = [
+  { id: 'railway', label: 'Railway Law', color: '#f59e0b' },
+  { id: 'cooperative', label: 'Cooperative Law', color: '#10b981' },
+  { id: 'property', label: 'Property Law', color: '#6366f1' },
+  { id: 'criminal', label: 'Criminal Law', color: '#ef4444' },
+  { id: 'labour', label: 'Labour Law', color: '#8b5cf6' },
+];
+
+const getCatRgb = (color: string) => {
+  const map: Record<string, string> = { '#f59e0b': '245,158,11', '#10b981': '16,185,129', '#6366f1': '99,102,241', '#ef4444': '239,68,68', '#8b5cf6': '139,92,246' };
+  return map[color] || '99,102,241';
+};
+
+export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout: () => void }) {
+  const [view, setView] = useState("command");
+
+  const [clients, setClients] = useState(CLIENTS);
+  const [addingClient, setAddingClient] = useState(false);
+  const [newClient, setNewClient] = useState<any>({});
+  const [clientDocs, setClientDocs] = useState<any>({});
+  const [clientDocsModal, setClientDocsModal] = useState<any>(null);
+  const [chatHistory, setChatHistory] = useState<any[]>([]);
+  const [voiceRecords, setVoiceRecords] = useState(VOICE_RECORDS);
+  const [activeCallRecord, setActiveCallRecord] = useState<any>(null);
+  const [gdrive, setGdrive] = useState<any>({ connected: false, folderId: null, loading: false });
+  const [voiceAiOn, setVoiceAiOn] = useState(false);
+  const [voiceAiListening, setVoiceAiListening] = useState(false);
+  const [voiceAiReply, setVoiceAiReply] = useState('');
+  const [camOn, setCamOn] = useState(false);
+  const [calls, setCalls] = useState<any[]>([]);
+  const [activeCall, setActiveCall] = useState<any>(null);
+  const [notifications, setNotifications] = useState(NOTIFICATIONS);
+  const [supportMsgs, setSupportMsgs] = useState([{ id: 1, role: 'ai', text: 'Hello. I am the Nexus Support AI. Please describe any issues you are facing with the platform.' }]);
+  const [supportInput, setSupportInput] = useState("");
+  const [consoleInput, setConsoleInput] = useState("");
+  const [consoleLoading, setConsoleLoading] = useState(false);
+  const [supportLoading, setSupportLoading] = useState(false);
+
+  const [kbDocs, setKbDocs] = useState([
+    { id: 1, category: 'railway', name: 'Railways Act, 1989.pdf', size: '2.4 MB', date: '2026-01-12', pages: 184 },
+    { id: 2, category: 'railway', name: 'Railway Claims Tribunal Rules.pdf', size: '840 KB', date: '2026-01-15', pages: 62 },
+    { id: 3, category: 'cooperative', name: 'Kerala Co-operative Societies Act.pdf', size: '1.1 MB', date: '2025-11-20', pages: 96 },
+    { id: 4, category: 'property', name: 'Transfer of Property Act, 1882.pdf', size: '960 KB', date: '2025-10-05', pages: 78 },
+  ]);
+
+  const [tempInstructions, setTempInstructions] = useState([
+    { id: 1, text: 'If Raju calls, tell him to meet me tomorrow at 10 AM.', active: true, created: '2026-03-06 09:00' },
+    { id: 2, text: 'If my clerk calls, tell him to bring A4 size paper.', active: true, created: '2026-03-06 10:30' },
+  ]);
+  const activeInstructions = tempInstructions.filter(i => i.active);
+
+  const [draftPages, setDraftPages] = useState([
+    "IN THE COURT OF THE DISTRICT JUDGE, ERNAKULAM\n\nO.S. No. 145 of 2025...",
+    "FACTS OF THE CASE:\n\n1. The Plaintiff is the absolute owner...",
+    "CAUSE OF ACTION:\n\n5. The cause of action for this suit arose..."
+  ]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [incomingCall, setIncomingCall] = useState<any>(null);
+  const [draftSuggestions, setDraftSuggestions] = useState([
+    { id: 1, type: 'add', text: 'Add valuation clause: "The suit is valued at ₹1,00,000/- for the purpose of court fees and jurisdiction."', status: 'pending', line: 'Page 3 — Valuation' },
+    { id: 2, type: 'delete', text: 'Remove vague phrase "approximately 2 Cents" — use exact survey measurement from the title deed instead.', status: 'pending', line: 'Page 2 — Para 3' },
+  ]);
+
+  const [scanPhase, setScanPhase] = useState('idle'); 
+  const [scannedText, setScannedText] = useState('');
+  const [convPages, setConvPages] = useState<any[]>([]);
+  const [transSourceText, setTransSourceText] = useState('');
+  const [transResult, setTransResult] = useState('');
+
+  const chatRef = useRef<HTMLDivElement>(null);
+  const supportRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const sideNav = [
+    { id: 'command', label: 'Command', icon: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" },
+    { id: 'feed', label: 'Feed', icon: "M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" },
+    { id: 'consult', label: 'Consult', icon: "M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" },
+    { id: 'clients', label: 'Clients', icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
+    { id: 'knowledge-base', label: 'Knowledge', icon: "M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" },
+    { id: 'temp-instructions', label: 'Instructions', icon: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
+    { id: 'notifications', label: 'Notif.', icon: "M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" },
+    { id: 'support', label: 'Support', icon: "M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" },
+    { id: 'reading-room', label: 'Read', icon: "M15 12a3 3 0 11-6 0 3 3 0 016 0z" },
+    { id: 'doc-converter', label: 'Convert', icon: "M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" },
+    { id: 'writing-desk', label: 'Writing', icon: "M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" },
+    { id: 'dialer', label: 'Dialer', icon: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" },
+  ];
+
+  const S = {
+    page: { display: 'flex', height: '100vh', background: '#020617', color: '#e2e8f0', overflow: 'hidden' },
+    sidebar: { width: 72, background: '#070b14', borderRight: '1px solid rgba(255,255,255,.05)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '20px 0', gap: 8, flexShrink: 0, overflowY: 'auto' as const },
+    sideBtn: (active: boolean) => ({ width: 44, height: 44, borderRadius: 12, background: active ? 'rgba(245,158,11,.1)' : 'transparent', border: active ? '1px solid rgba(245,158,11,.25)' : '1px solid transparent', color: active ? '#f59e0b' : '#475569', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' as const, transition: 'all .2s' }),
+    header: { height: 56, background: '#0a0f1d', borderBottom: '1px solid rgba(255,255,255,.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', flexShrink: 0 },
+    card: { background: '#0a0f1d', borderRadius: 24, padding: 28, border: '1px solid rgba(255,255,255,.05)' },
+  };
+
+  const startScan = async () => {
+    setScanPhase('starting');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setScanPhase('live');
+    } catch {
+      setScanPhase('error');
+    }
+  };
+
+  useEffect(() => {
+    const sse = new EventSource('/api/calls/stream');
+    sse.addEventListener('call', (e) => {
+      const call = JSON.parse(e.data);
+      if (call.status === 'incoming') {
+        setIncomingCall(call);
+        // Auto-answer logic (simulated)
+        setTimeout(() => {
+          setIncomingCall(prev => prev?.id === call.id ? { ...prev, status: 'answered' } : prev);
+        }, 3000);
+      } else if (call.status === 'ended' || call.status === 'missed') {
+        setIncomingCall(null);
+        setVoiceRecords(prev => [call, ...prev]);
+      }
+    });
+    return () => sse.close();
+  }, []);
+
+  const sendConsult = async () => {
+    if (!consoleInput.trim() || consoleLoading) return;
+    const text = consoleInput.trim(); setConsoleInput('');
+    setChatHistory(h => [...h, { role: 'user', text, id: Date.now() }]);
+    setConsoleLoading(true);
+    try {
+      const res = await api.post('/api/ai/consult', { message: text, history: chatHistory });
+      setChatHistory(h => [...h, { role: 'ai', text: res.data.reply, id: Date.now() }]);
+    } catch {
+      setChatHistory(h => [...h, { role: 'ai', text: 'AI service unavailable.', id: Date.now() }]);
+    }
+    setConsoleLoading(false);
+  };
+
+  return (
+    <div style={S.page}>
+      <div style={S.sidebar}>
+        <div style={{ width: 44, height: 44, background: '#f59e0b', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12, flexShrink: 0 }}>
+          <span style={{ fontSize: 22, fontWeight: 900, color: '#000', fontStyle: 'italic' }}>T</span>
+        </div>
+        {sideNav.map(item => (
+          <button key={item.id} onClick={() => setView(item.id)} title={item.label} style={S.sideBtn(view === item.id)}>
+            <Icon path={item.icon} size={18} />
+          </button>
+        ))}
+        <button onClick={onLogout} style={{ marginTop: 'auto', color: '#ef4444', fontSize: 10, fontWeight: 'bold' }}>Logout</button>
+      </div>
+
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <header style={S.header}>
+          <div className="flex items-center gap-4">
+            <span className="text-amber-500 font-bold uppercase text-[10px] tracking-widest">Advocate Portal</span>
+            <span className="text-slate-700">|</span>
+            <span className="text-white font-medium text-sm">{user.name}</span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 900, color: '#fff' }}>Nexus Justice <span style={{ color: '#6366f1' }}>v3.1</span></span>
+          </div>
+        </header>
+
+        <main style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
+          {view === 'command' && (
+            <div className="p-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              <div style={S.card} className="col-span-full lg:col-span-1">
+                <h3 className="text-xl font-bold mb-4 italic">Command Center</h3>
+                <div className="space-y-4">
+                  <button onClick={() => setView('consult')} className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold transition-all shadow-lg shadow-indigo-500/20">Open AI Consultant</button>
+                  <button onClick={() => setView('writing-desk')} className="w-full py-4 bg-slate-800 hover:bg-slate-700 rounded-2xl font-bold border border-slate-700 transition-all">Open Writing Desk</button>
+                  <button onClick={async () => {
+                    await api.post('/api/calls/webhook', {
+                      caller: 'Raju (Client)',
+                      phone: '+91 98765 43210',
+                      status: 'incoming',
+                      advocateEmail: user.email
+                    });
+                  }} className="w-full py-3 bg-slate-900 border border-slate-800 rounded-xl text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:text-white transition-all">Simulate Incoming Call</button>
+                </div>
+              </div>
+              <div style={S.card} className="lg:col-span-2">
+                <h3 className="text-xl font-bold mb-4 italic">Recent Call Records</h3>
+                <div className="space-y-3">
+                  {voiceRecords.map(r => (
+                    <div key={r.id} className="p-5 bg-slate-900/50 border border-slate-800 rounded-2xl hover:border-slate-700 transition-all cursor-pointer">
+                      <div className="flex justify-between mb-2">
+                        <span className="font-bold text-slate-200">{r.client}</span>
+                        <span className="text-slate-500 text-xs font-mono">{r.date}</span>
+                      </div>
+                      <p className="text-sm text-slate-400 leading-relaxed">{r.summary}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {view === 'feed' && (
+            <div className="p-8 space-y-6">
+              <h2 className="text-2xl font-bold italic">Hearing Feed</h2>
+              <div style={S.card}>
+                <div className="space-y-4">
+                  {CLIENTS.slice(0, 3).map(c => (
+                    <div key={c.slNo} className="flex items-center justify-between p-4 border-b border-slate-800 last:border-0">
+                      <div>
+                        <div className="font-bold">{c.name}</div>
+                        <div className="text-xs text-slate-500">{c.caseNumber} · {c.courtName}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-emerald-500 font-bold text-sm">{c.nextPostingDate}</div>
+                        <div className="text-[10px] text-slate-500 uppercase tracking-wider">{c.purposeOfPosting}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {view === 'consult' && (
+            <div className="h-full flex flex-col p-6 gap-4">
+              <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-3xl overflow-hidden flex flex-col shadow-2xl">
+                <div ref={chatRef} className="flex-1 overflow-y-auto p-8 space-y-6">
+                  {chatHistory.length === 0 && (
+                    <div className="h-full flex flex-col items-center justify-center text-center opacity-40">
+                      <div className="w-16 h-16 bg-slate-800 rounded-2xl flex items-center justify-center mb-4">
+                        <Icon path="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" size={32} />
+                      </div>
+                      <p className="text-lg font-medium">Ask Nexus AI anything legal</p>
+                      <p className="text-sm">Drafting, case strategy, or legal research</p>
+                    </div>
+                  )}
+                  {chatHistory.map(m => (
+                    <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[85%] p-5 rounded-2xl leading-relaxed ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none shadow-lg shadow-indigo-500/10' : 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700'}`}>
+                        {m.text}
+                      </div>
+                    </div>
+                  ))}
+                  {consoleLoading && (
+                    <div className="flex justify-start">
+                      <div className="bg-slate-800 p-5 rounded-2xl rounded-tl-none border border-slate-700 flex gap-1">
+                        <div className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce" />
+                        <div className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce delay-75" />
+                        <div className="w-1.5 h-1.5 bg-slate-500 rounded-full animate-bounce delay-150" />
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="p-6 border-t border-slate-800 bg-slate-900/80 backdrop-blur-md flex gap-4">
+                  <input 
+                    value={consoleInput}
+                    onChange={e => setConsoleInput(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && sendConsult()}
+                    className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl px-6 py-4 outline-none focus:border-indigo-500 transition-all text-sm"
+                    placeholder="Describe the legal issue or ask for a draft..."
+                  />
+                  <button onClick={sendConsult} className="px-8 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold transition-all shadow-lg shadow-indigo-500/20">Send</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {view === 'clients' && (
+            <div className="p-8">
+              <div className="flex justify-between items-center mb-8">
+                <h2 className="text-2xl font-bold italic">Client Registry</h2>
+                <button onClick={() => setAddingClient(true)} className="px-5 py-2.5 bg-amber-500 text-black font-bold rounded-xl text-xs uppercase tracking-widest">+ Add Client</button>
+              </div>
+              <div style={S.card} className="overflow-hidden p-0">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-800">
+                      <th className="p-5 text-[10px] uppercase tracking-widest text-slate-500 font-bold">Client</th>
+                      <th className="p-5 text-[10px] uppercase tracking-widest text-slate-500 font-bold">Case No.</th>
+                      <th className="p-5 text-[10px] uppercase tracking-widest text-slate-500 font-bold">Next Date</th>
+                      <th className="p-5 text-[10px] uppercase tracking-widest text-slate-500 font-bold">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clients.map(c => (
+                      <tr key={c.slNo} className="border-b border-slate-900/50 hover:bg-slate-900/30 transition-all">
+                        <td className="p-5">
+                          <div className="font-bold text-sm">{c.name}</div>
+                          <div className="text-xs text-slate-500">{c.phone}</div>
+                        </td>
+                        <td className="p-5">
+                          <span className="px-3 py-1 bg-indigo-500/10 text-indigo-400 rounded-lg text-xs font-mono font-bold border border-indigo-500/20">{c.caseNumber}</span>
+                        </td>
+                        <td className="p-5 text-sm font-medium text-emerald-500">{c.nextPostingDate}</td>
+                        <td className="p-5">
+                          <button className="text-slate-500 hover:text-white transition-all">View Files</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {view === 'knowledge-base' && (
+            <div className="p-8 space-y-6">
+              <h2 className="text-2xl font-bold italic">Knowledge Base</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {kbDocs.map(doc => (
+                  <div key={doc.id} style={S.card} className="p-6 hover:border-indigo-500/30 transition-all group">
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-500 group-hover:scale-110 transition-transform">
+                        <Icon path="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" size={20} />
+                      </div>
+                      <span className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">{doc.size}</span>
+                    </div>
+                    <div className="font-bold text-sm mb-1">{doc.name}</div>
+                    <div className="text-xs text-slate-500">{doc.pages} pages · Added {doc.date}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {view === 'temp-instructions' && (
+            <div className="p-8 space-y-6">
+              <h2 className="text-2xl font-bold italic">Temporary Instructions</h2>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div style={S.card} className="border-amber-500/20">
+                  <h4 className="text-xs font-bold uppercase tracking-widest text-amber-500 mb-4">Add New Instruction</h4>
+                  <textarea className="w-full bg-slate-900 border border-slate-800 rounded-xl p-4 text-sm mb-4" rows={4} placeholder="e.g. If my clerk calls, tell him to bring the OS 145 file..." />
+                  <button className="w-full py-3 bg-amber-500 text-black font-bold rounded-xl text-xs uppercase tracking-widest">Save Instruction</button>
+                </div>
+                <div className="space-y-3">
+                  {tempInstructions.map(instr => (
+                    <div key={instr.id} style={S.card} className={`p-5 ${instr.active ? 'border-emerald-500/20' : 'opacity-50'}`}>
+                      <div className="flex justify-between items-start mb-2">
+                        <p className="text-sm leading-relaxed">{instr.text}</p>
+                        <div className={`w-2 h-2 rounded-full ${instr.active ? 'bg-emerald-500' : 'bg-slate-600'}`} />
+                      </div>
+                      <div className="text-[10px] text-slate-600 font-bold uppercase tracking-wider">{instr.created}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {view === 'notifications' && (
+            <div className="p-8 space-y-6">
+              <h2 className="text-2xl font-bold italic">Notifications</h2>
+              <div className="space-y-3">
+                {notifications.map(n => (
+                  <div key={n.id} style={S.card} className="p-5 flex items-center gap-4">
+                    <div className={`w-2 h-2 rounded-full ${n.read ? 'bg-slate-800' : 'bg-indigo-500 animate-pulse'}`} />
+                    <div className="flex-1">
+                      <p className={`text-sm ${n.read ? 'text-slate-500' : 'text-slate-200 font-medium'}`}>{n.message}</p>
+                      <span className="text-[10px] text-slate-600 uppercase font-bold tracking-widest">{n.date}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {view === 'support' && (
+            <div className="h-full flex flex-col p-8 gap-6">
+              <h2 className="text-2xl font-bold italic">Help Desk</h2>
+              <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-3xl overflow-hidden flex flex-col">
+                <div ref={supportRef} className="flex-1 overflow-y-auto p-8 space-y-6">
+                  {supportMsgs.map(m => (
+                    <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[80%] p-5 rounded-2xl text-sm leading-relaxed ${m.role === 'user' ? 'bg-amber-500 text-black font-medium rounded-tr-none' : 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700'}`}>
+                        {m.text}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="p-6 border-t border-slate-800 flex gap-4">
+                  <input className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl px-6 py-4 outline-none text-sm" placeholder="Describe your issue..." />
+                  <button className="px-8 bg-amber-500 text-black font-bold rounded-2xl">Send</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {view === 'reading-room' && (
+            <div className="p-8 space-y-6 h-full flex flex-col">
+              <h2 className="text-2xl font-bold italic">Reading Room</h2>
+              <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-8 overflow-hidden">
+                <div style={S.card} className="flex flex-col items-center justify-center border-dashed border-2 border-slate-800">
+                  <div className="w-20 h-20 bg-slate-900 rounded-3xl flex items-center justify-center mb-6">
+                    <Icon path="M15 12a3 3 0 11-6 0 3 3 0 016 0z" size={40} />
+                  </div>
+                  <button onClick={startScan} className="px-10 py-4 bg-emerald-600 hover:bg-emerald-500 rounded-2xl font-bold transition-all shadow-lg shadow-emerald-500/20">Start Camera OCR</button>
+                  <p className="text-xs text-slate-500 mt-6 uppercase tracking-widest font-bold">Hold document steady for scanning</p>
+                </div>
+                <div style={S.card} className="bg-slate-950/50 flex flex-col">
+                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-600 mb-4">Scanned Text Output</h4>
+                  <div className="flex-1 overflow-y-auto font-mono text-sm text-slate-400 leading-relaxed italic">
+                    {scannedText || "Scanning results will appear here..."}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {view === 'doc-converter' && (
+            <div className="p-8 space-y-6 h-full flex flex-col">
+              <h2 className="text-2xl font-bold italic">Document Converter</h2>
+              <div style={S.card} className="flex-1 flex flex-col items-center justify-center border-dashed border-2 border-slate-800">
+                <div className="w-16 h-16 bg-indigo-500/10 text-indigo-500 rounded-2xl flex items-center justify-center mb-6">
+                  <Icon path="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" size={32} />
+                </div>
+                <h3 className="text-lg font-bold mb-2">Multi-page Converter</h3>
+                <p className="text-sm text-slate-500 mb-8 max-w-sm text-center">Scan multiple pages, translate to Indian languages, and export as searchable PDF or Text.</p>
+                <div className="flex gap-4">
+                  <button className="px-8 py-3 bg-indigo-600 rounded-xl font-bold">Upload PDF</button>
+                  <button className="px-8 py-3 bg-slate-800 border border-slate-700 rounded-xl font-bold">Scan Pages</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {view === 'writing-desk' && (
+            <div className="h-full flex flex-col">
+              <div className="flex-1 flex overflow-hidden">
+                <div className="flex-1 bg-slate-950 p-10 overflow-y-auto font-mono text-sm leading-relaxed">
+                  <div className="max-w-3xl mx-auto bg-white text-black p-16 shadow-2xl min-h-full rounded-sm">
+                    <pre className="whitespace-pre-wrap font-serif text-base">{draftPages[currentPage-1]}</pre>
+                  </div>
+                </div>
+                <div className="w-96 bg-slate-900 border-l border-slate-800 p-8 flex flex-col gap-8 shadow-2xl">
+                  <div>
+                    <h3 className="font-bold text-amber-500 uppercase text-[10px] tracking-[0.2em] mb-6">AI Drafting Assistant</h3>
+                    <div className="space-y-4">
+                      {draftSuggestions.map(s => (
+                        <div key={s.id} className="p-5 bg-slate-800/50 rounded-2xl border border-slate-700 hover:border-slate-600 transition-all">
+                          <div className="flex items-center gap-2 mb-3">
+                            <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded ${s.type === 'add' ? 'bg-emerald-500/20 text-emerald-500' : 'bg-rose-500/20 text-rose-500'}`}>{s.type}</span>
+                            <span className="text-[9px] text-slate-500 font-bold">{s.line}</span>
+                          </div>
+                          <p className="text-xs text-slate-300 leading-relaxed mb-4">{s.text}</p>
+                          <div className="flex gap-2">
+                            <button className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all">Accept</button>
+                            <button className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all">Reject</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="h-20 bg-slate-900 border-t border-slate-800 flex items-center px-8 justify-between">
+                <div className="flex gap-2">
+                  {draftPages.map((_, i) => (
+                    <button key={i} onClick={() => setCurrentPage(i+1)} className={`w-10 h-10 rounded-xl font-bold text-xs transition-all ${currentPage === i+1 ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20 scale-110' : 'bg-slate-800 text-slate-500 hover:text-slate-300'}`}>{i+1}</button>
+                  ))}
+                  <button className="w-10 h-10 rounded-xl bg-slate-800 text-emerald-500 font-bold hover:bg-slate-700 transition-all">+</button>
+                </div>
+                <div className="flex gap-3">
+                  <button className="px-6 py-2.5 bg-indigo-600 rounded-xl text-xs font-bold uppercase tracking-widest">Export Draft</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {view === 'dialer' && (
+            <div className="p-8 h-full flex flex-col items-center justify-center">
+              <div className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-[40px] p-8 shadow-2xl">
+                <div className="text-center mb-8">
+                  <div className="text-3xl font-mono tracking-widest text-white mb-2 h-10">
+                    {consoleInput || "Nexus Dialer"}
+                  </div>
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Nexus Link Online</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4 mb-8">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, '*', 0, '#'].map(num => (
+                    <button 
+                      key={num} 
+                      onClick={() => setConsoleInput(prev => prev + num)}
+                      className="w-16 h-16 rounded-full bg-slate-800 hover:bg-slate-700 text-xl font-bold transition-all active:scale-90"
+                    >
+                      {num}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-center gap-6">
+                  <button 
+                    onClick={() => setConsoleInput(prev => prev.slice(0, -1))}
+                    className="w-14 h-14 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center hover:text-white transition-all"
+                  >
+                    <Icon path="M12 19l-7-7 7-7m5 14l-7-7 7-7" size={20} />
+                  </button>
+                  <button className="w-20 h-20 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/20 transition-all active:scale-95">
+                    <Icon path="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" size={28} />
+                  </button>
+                  <button 
+                    onClick={() => setVoiceAiOn(!voiceAiOn)}
+                    className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${voiceAiOn ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-500'}`}
+                  >
+                    <Icon path="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" size={20} />
+                  </button>
+                </div>
+              </div>
+              
+              <div className="mt-8 w-full max-w-sm">
+                <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-600 mb-4 text-center">Recent Activity</h4>
+                <div className="space-y-2">
+                  {voiceRecords.slice(0, 3).map(r => (
+                    <div key={r.id} className="p-4 bg-slate-900/50 border border-slate-800 rounded-2xl flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-bold">{r.client}</div>
+                        <div className="text-[10px] text-slate-500">{r.duration} · {r.date}</div>
+                      </div>
+                      <Icon path="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" size={14} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+        
+        {incomingCall && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-6">
+            <div className="w-full max-w-md bg-slate-900 border border-slate-700 rounded-[40px] p-10 text-center shadow-[0_0_100px_rgba(79,70,229,0.2)]">
+              <div className="w-24 h-24 bg-indigo-600 rounded-full mx-auto mb-8 flex items-center justify-center animate-pulse shadow-[0_0_30px_rgba(79,70,229,0.5)]">
+                <Icon path="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" size={40} />
+              </div>
+              <h2 className="text-3xl font-black mb-2 tracking-tight">{incomingCall.caller || 'Unknown Caller'}</h2>
+              <p className="text-indigo-400 font-mono text-lg mb-8">{incomingCall.phone}</p>
+              
+              <div className="bg-slate-800/50 rounded-3xl p-6 mb-8 border border-slate-700">
+                <div className="flex items-center gap-3 mb-3 justify-center">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-emerald-500">
+                    {incomingCall.status === 'incoming' ? 'Automatic Answering...' : 'Call Answered'}
+                  </span>
+                </div>
+                <p className="text-sm text-slate-400 italic">
+                  {incomingCall.status === 'incoming' 
+                    ? "Nexus AI is preparing to handle this call based on your instructions." 
+                    : "AI is currently speaking with the client. Summary will be generated soon."}
+                </p>
+              </div>
+
+              <div className="flex gap-4">
+                <button onClick={() => setIncomingCall(null)} className="flex-1 py-4 bg-rose-600 hover:bg-rose-500 rounded-2xl font-bold transition-all">End Call</button>
+                <button className="flex-1 py-4 bg-slate-800 hover:bg-slate-700 rounded-2xl font-bold border border-slate-700 transition-all">Take Over</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Voice AI Dock */}
+        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-4 pointer-events-none">
+          {voiceAiOn && (
+            <div className="pointer-events-auto bg-slate-900/95 backdrop-blur-2xl border border-slate-700 rounded-3xl p-6 w-96 shadow-[0_20px_50px_rgba(0,0,0,0.5)] border-b-indigo-500/50">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-500">Nexus Voice Active</span>
+                </div>
+                <div className="flex gap-1">
+                  {[1,2,3,4].map(i => <div key={i} className="w-1 bg-indigo-500/30 rounded-full animate-wave" style={{ height: 12, animationDelay: `${i*0.1}s` }} />)}
+                </div>
+              </div>
+              <p className="text-sm text-slate-200 leading-relaxed italic font-medium">"{voiceAiReply || 'Listening for your command...'}"</p>
+            </div>
+          )}
+          <div className="pointer-events-auto bg-slate-900/90 backdrop-blur-2xl border border-slate-800 rounded-full p-3 flex items-center gap-3 shadow-2xl border-t-white/5">
+            <button onClick={() => { setCamOn(!camOn); setView('consult'); }} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-500 ${camOn ? 'bg-indigo-600 text-white shadow-[0_0_20px_rgba(79,70,229,0.4)] scale-110' : 'bg-slate-800 text-slate-500 hover:text-slate-300'}`}>
+              <Icon path="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" size={22} />
+            </button>
+            <button onClick={() => { setVoiceAiOn(!voiceAiOn); setView('consult'); }} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-500 ${voiceAiOn ? 'bg-amber-500 text-black shadow-[0_0_20px_rgba(245,158,11,0.4)] scale-110' : 'bg-slate-800 text-slate-500 hover:text-slate-300'}`}>
+              <Icon path="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" size={22} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

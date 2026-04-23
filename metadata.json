@@ -1,0 +1,8 @@
+{
+  "name": "Nexus Justice",
+  "description": "AI-powered legal platform for advocates, agency administrators, and affiliates featuring automated call answering, legal drafting, and multilingual support.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
