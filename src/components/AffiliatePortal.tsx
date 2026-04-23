@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../api';
-import { LayoutDashboard, Users, CreditCard, Share2, Copy, Check, LogOut } from 'lucide-react';
+import { LayoutDashboard, Users, CreditCard, Share2, Copy, Check } from 'lucide-react';
+import { UserButton } from '@clerk/clerk-react';
 
 export default function AffiliatePortal({ user, onLogout }: { user: any, onLogout: () => void }) {
   const [data, setData] = useState<any>(null);
@@ -78,14 +79,8 @@ export default function AffiliatePortal({ user, onLogout }: { user: any, onLogou
           ))}
         </nav>
 
-        <div className="px-3 mt-auto pt-6 border-t border-slate-800">
-          <button 
-            onClick={onLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-rose-400 hover:bg-rose-500/10 transition-all"
-          >
-            <LogOut size={18} />
-            Sign Out
-          </button>
+        <div className="px-3 mt-auto pt-6 border-t border-slate-800 flex justify-center">
+          <UserButton afterSignOutUrl="/" showName />
         </div>
       </div>
 
@@ -96,13 +91,14 @@ export default function AffiliatePortal({ user, onLogout }: { user: any, onLogou
             <span className="text-sm font-bold text-slate-400">Nexus Justice</span>
             <span className="text-emerald-500 font-black italic">Affiliate Portal</span>
           </div>
-          <div className="flex gap-3">
-            <div className="px-4 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[10px] font-bold text-emerald-500 uppercase tracking-wider">
+          <div className="flex gap-4 items-center">
+            <div className="hidden sm:flex px-4 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-full text-[10px] font-bold text-emerald-500 uppercase tracking-wider">
               Code: {aff?.code || '—'}
             </div>
-            <div className="px-4 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-full text-[10px] font-bold text-amber-500 uppercase tracking-wider">
+            <div className="hidden md:flex px-4 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-full text-[10px] font-bold text-amber-500 uppercase tracking-wider">
               ₹{earned.toFixed(2)} Earned
             </div>
+            <UserButton afterSignOutUrl="/" />
           </div>
         </header>
 

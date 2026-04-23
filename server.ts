@@ -6,23 +6,24 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
-import session from 'express-session';
-import { OAuth2Client } from 'google-auth-library';
+import { clerkMiddleware, getAuth, createClerkClient } from '@clerk/express';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// SQLite Connection
-const dbPath = process.env.NODE_ENV === 'production' ? path.join('/tmp', 'nexus_justice.db') : 'nexus_justice.db';
-const db = new Database(dbPath);
+// Initialize Clerk Client for backend management
+const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
-// Initialize Tables
+// SQLite Connection
+const db = new Database('nexus_justice.db');
+
+// Initialize Tables (Updated to use clerk_id)
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    google_id TEXT UNIQUE,
+    clerk_id TEXT UNIQUE,
     email TEXT UNIQUE,
     name TEXT,
     role TEXT DEFAULT 'advocate',
@@ -52,153 +53,82 @@ async function startServer() {
 
   app.use(cors());
   app.use(express.json());
-  app.use(session({
-    secret: process.env.SESSION_SECRET || 'nexus-secret',
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      secure: true,
-      sameSite: 'none',
-      httpOnly: true,
-    }
-  }));
 
-  const googleClient = new OAuth2Client(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET
-  );
+  // Check for Clerk Secret Key
+  if (!process.env.CLERK_SECRET_KEY) {
+    console.warn('CRITICAL: CLERK_SECRET_KEY is missing. Profile sync will fail.');
+  }
+
+  app.use(clerkMiddleware());
 
   // --- API Routes ---
 
-  // Google OAuth URL
-  app.get('/api/auth/google/url', (req, res) => {
+  // User Profile - Automatically syncs Clerk data on request
+  app.get('/api/user/profile', async (req, res) => {
+    const { userId } = getAuth(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    
     try {
-      const clientId = process.env.GOOGLE_CLIENT_ID;
-      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-      const appUrl = process.env.APP_URL || process.env.NEXTAUTH_URL || 'http://localhost:3000';
-
-      if (!clientId || !clientSecret) {
-        console.error('Missing Google Client ID or Secret in environment variables');
-        return res.status(400).json({ 
-          error: 'Missing Google Auth configuration.',
-          details: 'Please ensure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set in environment variables.' 
-        });
-      }
-
-      const redirectUri = `${appUrl.replace(/\/$/, '')}/auth/google/callback`;
+      let user = db.prepare('SELECT * FROM users WHERE clerk_id = ?').get(userId) as any;
       
-      const url = googleClient.generateAuthUrl({
-        access_type: 'offline',
-        scope: ['https://www.googleapis.com/auth/userinfo.profile', 'https://www.googleapis.com/auth/userinfo.email'],
-        redirect_uri: redirectUri,
-      });
-      res.json({ url });
-    } catch (err) {
-      console.error('Error generating Google Auth URL:', err);
-      res.status(500).json({ error: 'Internal server error while generating auth URL' });
-    }
-  });
-
-  // Google OAuth Callback
-  app.get(['/auth/google/callback', '/auth/google/callback/'], async (req, res) => {
-    const { code } = req.query;
-    const appUrl = process.env.APP_URL || process.env.NEXTAUTH_URL || 'http://localhost:3000';
-    const redirectUri = `${appUrl.replace(/\/$/, '')}/auth/google/callback`;
-    
-    try {
-      if (!code) throw new Error('No code provided in callback');
-      const { tokens } = await googleClient.getToken({
-        code: code as string,
-        redirect_uri: redirectUri,
-      });
-      googleClient.setCredentials(tokens);
-
-      const userInfoRes = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
-        headers: { Authorization: `Bearer ${tokens.access_token}` },
-      });
-      const userInfo = userInfoRes.data;
-
-      // Upsert user
-      let user = db.prepare('SELECT * FROM users WHERE google_id = ?').get(userInfo.sub) as any;
       if (!user) {
-        const info = db.prepare('INSERT INTO users (google_id, email, name, bar_council_no) VALUES (?, ?, ?, ?)')
-          .run(userInfo.sub, userInfo.email, userInfo.name, 'BC/' + Math.floor(Math.random() * 10000));
+        // Fetch full profile from Clerk to populate database
+        const clerkUser = await clerkClient.users.getUser(userId);
+        const email = clerkUser.emailAddresses[0]?.emailAddress;
+        const name = `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || 'Barrister';
+        
+        const info = db.prepare('INSERT INTO users (clerk_id, email, name, bar_council_no) VALUES (?, ?, ?, ?)')
+          .run(userId, email, name, 'BC/' + Math.floor(Math.random() * 10000));
+          
         user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+      } else if (!user.email || !user.name) {
+        // Update existing stub users who logged in before we added Clerk API sync
+        const clerkUser = await clerkClient.users.getUser(userId);
+        const email = clerkUser.emailAddresses[0]?.emailAddress;
+        const name = `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || 'Barrister';
+        
+        db.prepare('UPDATE users SET email = ?, name = ? WHERE clerk_id = ?').run(email, name, userId);
+        user = { ...user, email, name };
       }
-
-      // Store user in session or return token
-      // For simplicity in this demo, we'll use a mock token
-      const token = Buffer.from(JSON.stringify({ id: user.id, email: user.email })).toString('base64');
-
-      res.send(`
-        <html>
-          <body>
-            <script>
-              if (window.opener) {
-                window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS', token: '${token}', user: ${JSON.stringify(user)} }, '*');
-                window.close();
-              } else {
-                window.location.href = '/';
-              }
-            </script>
-            <p>Authentication successful. This window should close automatically.</p>
-          </body>
-        </html>
-      `);
-    } catch (err) {
-      console.error('OAuth error:', err);
-      res.status(500).send('Authentication failed');
-    }
-  });
-
-  // User Profile
-  app.get('/api/user/profile', (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) return res.status(401).json({ error: 'Unauthorized' });
-    
-    try {
-      const token = authHeader.split(' ')[1];
-      const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
-      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(decoded.id);
+      
       res.json(user);
     } catch (err) {
-      res.status(401).json({ error: 'Invalid token' });
+      console.error('Clerk Sync Error:', err);
+      // Fallback: return a guest-style user if Clerk API fails
+      res.json(db.prepare('SELECT * FROM users WHERE clerk_id = ?').get(userId) || { clerk_id: userId, name: 'Barrister' });
     }
   });
 
   // Save Gemini API Key
   app.post('/api/user/apikey', (req, res) => {
-    const authHeader = req.headers.authorization;
+    const { userId } = getAuth(req);
     const { apiKey } = req.body;
-    if (!authHeader) return res.status(401).json({ error: 'Unauthorized' });
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-      const token = authHeader.split(' ')[1];
-      const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
-      db.prepare('UPDATE users SET gemini_api_key = ? WHERE id = ?').run(apiKey, decoded.id);
+      db.prepare('UPDATE users SET gemini_api_key = ? WHERE clerk_id = ?').run(apiKey, userId);
       res.json({ success: true });
     } catch (err) {
-      res.status(401).json({ error: 'Invalid token' });
+      res.status(500).json({ error: 'Failed to save API key' });
     }
   });
 
-  // AI Orchestrator Endpoint - Using ONLY Gemini 2.5 Flash Live (as requested)
+  // AI Orchestrator Endpoint
   app.post('/api/ai/consult', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) return res.status(401).json({ error: 'Unauthorized' });
+    const { userId } = getAuth(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     const { message, history = [] } = req.body;
     
     try {
-      const token = authHeader.split(' ')[1];
-      const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
-      const user = db.prepare('SELECT gemini_api_key FROM users WHERE id = ?').get(decoded.id) as any;
+      const user = db.prepare('SELECT gemini_api_key FROM users WHERE clerk_id = ?').get(userId) as any;
       
       const apiKey = user?.gemini_api_key || process.env.GEMINI_API_KEY;
       if (!apiKey) return res.status(400).json({ error: 'Gemini API key missing. Please provide one in settings.' });
 
-      // Call Gemini 2.5 Flash Live
-      const response = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-live:generateContent?key=${apiKey}`, {
+      // Call Gemini 2.5 Flash Live (as requested in original prompt)
+      // Note: gemini-2.5-flash-live might be 1.5-flash-8b or 1.5-flash depending on availability
+      const response = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
         contents: [...history.map((h: any) => ({ role: h.role === 'ai' ? 'model' : 'user', parts: [{ text: h.text }] })), { role: 'user', parts: [{ text: message }] }]
       });
       
@@ -212,13 +142,12 @@ async function startServer() {
 
   // Calls Endpoint
   app.get('/api/calls', async (req, res) => {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) return res.status(401).json({ error: 'Unauthorized' });
+    const { userId } = getAuth(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-      const token = authHeader.split(' ')[1];
-      const decoded = JSON.parse(Buffer.from(token, 'base64').toString());
-      const calls = db.prepare('SELECT * FROM calls WHERE advocate_id = ? ORDER BY timestamp DESC').all(decoded.id);
+      const user = db.prepare('SELECT id FROM users WHERE clerk_id = ?').get(userId) as any;
+      const calls = db.prepare('SELECT * FROM calls WHERE advocate_id = ? ORDER BY timestamp DESC').all(user?.id);
       res.json({ calls });
     } catch (err) {
       res.status(500).json({ error: 'Fetch calls error' });

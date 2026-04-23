@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import api from '../api';
+import { UserButton } from "@clerk/clerk-react";
 
 const Icon = ({ path, size = 20, strokeWidth = 2 }: { path: string | string[], size?: number, strokeWidth?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
@@ -179,7 +180,6 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
             <Icon path={item.icon} size={18} />
           </button>
         ))}
-        <button onClick={onLogout} style={{ marginTop: 'auto', color: '#ef4444', fontSize: 10, fontWeight: 'bold' }}>Logout</button>
       </div>
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -187,10 +187,11 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
           <div className="flex items-center gap-4">
             <span className="text-amber-500 font-bold uppercase text-[10px] tracking-widest">Advocate Portal</span>
             <span className="text-slate-700">|</span>
-            <span className="text-white font-medium text-sm">{user.name}</span>
+            <span className="text-white font-medium text-sm">{user.name || 'Advocate'}</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 12, fontWeight: 900, color: '#fff' }}>Nexus Justice <span style={{ color: '#6366f1' }}>v3.1</span></span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span style={{ fontSize: 12, fontWeight: 900, color: '#fff' }} className="hidden sm:inline">Nexus Justice <span style={{ color: '#6366f1' }}>v3.1</span></span>
+            <UserButton afterSignOutUrl="/" />
           </div>
         </header>
 

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../api';
-import { LayoutDashboard, Users, CreditCard, AlertCircle, Share2, Megaphone, Brain, LogOut, Search } from 'lucide-react';
+import { LayoutDashboard, Users, CreditCard, AlertCircle, Share2, Megaphone, Brain, Search } from 'lucide-react';
+import { UserButton } from '@clerk/clerk-react';
 
 const Icon = ({ icon: IconComp, size = 20 }: { icon: any, size?: number }) => (
   <IconComp size={size} />
@@ -79,14 +80,8 @@ export default function AgencyHQPortal({ user, onLogout }: { user: any, onLogout
           ))}
         </nav>
 
-        <div className="px-3 mt-auto pt-6 border-t border-slate-800">
-          <button 
-            onClick={onLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-rose-400 hover:bg-rose-500/10 transition-all"
-          >
-            <LogOut size={18} />
-            Sign Out
-          </button>
+        <div className="px-3 mt-auto pt-6 border-t border-slate-800 flex justify-center">
+          <UserButton afterSignOutUrl="/" showName />
         </div>
       </div>
 
@@ -97,10 +92,11 @@ export default function AgencyHQPortal({ user, onLogout }: { user: any, onLogout
             <span className="text-sm font-bold text-slate-400">Nexus Justice</span>
             <span className="text-amber-500 font-black italic">Agency HQ</span>
           </div>
-          <div className="flex gap-3">
-            <div className="px-4 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-full text-[10px] font-bold text-amber-500 uppercase tracking-wider">
+          <div className="flex gap-4">
+            <div className="hidden md:flex px-4 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-full text-[10px] font-bold text-amber-500 uppercase tracking-wider items-center">
               {stats.totalAdvocates || 0} Advocates
             </div>
+            <UserButton afterSignOutUrl="/" />
           </div>
         </header>
 
