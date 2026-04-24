@@ -1,6 +1,6 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import Database from 'better-sqlite3';
+import { sql } from '@vercel/postgres';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -16,38 +16,52 @@ const __dirname = path.dirname(__filename);
 // Initialize Clerk Client for backend management
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
-// SQLite Connection
-const db = new Database('nexus_justice.db');
+async function initDb() {
+  try {
+    // Drop table logic if we need to migration, but usually "CREATE TABLE IF NOT EXISTS" is safer for "auto inject"
+    await sql`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        clerk_id TEXT UNIQUE,
+        email TEXT UNIQUE,
+        name TEXT,
+        role TEXT DEFAULT 'advocate',
+        gemini_api_key TEXT,
+        bar_council_no TEXT,
+        code TEXT UNIQUE,
+        referred_by TEXT,
+        plan TEXT DEFAULT 'Starter',
+        status TEXT DEFAULT 'active',
+        joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `;
 
-// Initialize Tables (Updated to use clerk_id)
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    clerk_id TEXT UNIQUE,
-    email TEXT UNIQUE,
-    name TEXT,
-    role TEXT DEFAULT 'advocate',
-    gemini_api_key TEXT,
-    bar_council_no TEXT,
-    plan TEXT DEFAULT 'Starter',
-    status TEXT DEFAULT 'active',
-    joined_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
+    await sql`
+      CREATE TABLE IF NOT EXISTS calls (
+        id SERIAL PRIMARY KEY,
+        caller TEXT,
+        phone TEXT,
+        status TEXT CHECK(status IN ('incoming', 'answered', 'ended', 'missed')) DEFAULT 'incoming',
+        duration TEXT,
+        summary TEXT,
+        advocate_id INTEGER REFERENCES users(id),
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `;
 
-  CREATE TABLE IF NOT EXISTS calls (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    caller TEXT,
-    phone TEXT,
-    status TEXT CHECK(status IN ('incoming', 'answered', 'ended', 'missed')) DEFAULT 'incoming',
-    duration TEXT,
-    summary TEXT,
-    advocate_id INTEGER,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(advocate_id) REFERENCES users(id)
-  );
-`);
+    // Ensure first user or specific emails are admins/agency if needed
+    // But we'll handle role assignment via the UI or manual DB for now
+    
+    console.log('Database initialized successfully');
+  } catch (err) {
+    console.error('Database initialization error:', err);
+  }
+}
 
 async function startServer() {
+  // Initialize database
+  await initDb();
+
   const app = express();
   const PORT = 3000;
 
@@ -69,44 +83,59 @@ async function startServer() {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     
     try {
-      let user = db.prepare('SELECT * FROM users WHERE clerk_id = ?').get(userId) as any;
+      const { rows } = await sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
+      let user = rows[0];
       
       if (!user) {
         // Fetch full profile from Clerk to populate database
         const clerkUser = await clerkClient.users.getUser(userId);
         const email = clerkUser.emailAddresses[0]?.emailAddress;
         const name = `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || 'Barrister';
+        const barNo = 'BC/' + Math.floor(Math.random() * 10000);
+        const code = 'NJ' + Math.random().toString(36).substring(2, 8).toUpperCase();
         
-        const info = db.prepare('INSERT INTO users (clerk_id, email, name, bar_council_no) VALUES (?, ?, ?, ?)')
-          .run(userId, email, name, 'BC/' + Math.floor(Math.random() * 10000));
-          
-        user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+        const result = await sql`
+          INSERT INTO users (clerk_id, email, name, bar_council_no, code) 
+          VALUES (${userId}, ${email}, ${name}, ${barNo}, ${code})
+          RETURNING *
+        `;
+        user = result.rows[0];
       } else if (!user.email || !user.name) {
         // Update existing stub users who logged in before we added Clerk API sync
         const clerkUser = await clerkClient.users.getUser(userId);
         const email = clerkUser.emailAddresses[0]?.emailAddress;
         const name = `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || 'Barrister';
         
-        db.prepare('UPDATE users SET email = ?, name = ? WHERE clerk_id = ?').run(email, name, userId);
-        user = { ...user, email, name };
+        const result = await sql`
+          UPDATE users 
+          SET email = ${email}, name = ${name} 
+          WHERE clerk_id = ${userId}
+          RETURNING *
+        `;
+        user = result.rows[0];
       }
       
       res.json(user);
     } catch (err) {
       console.error('Clerk Sync Error:', err);
-      // Fallback: return a guest-style user if Clerk API fails
-      res.json(db.prepare('SELECT * FROM users WHERE clerk_id = ?').get(userId) || { clerk_id: userId, name: 'Barrister' });
+      // Fallback: try to return whatever we have
+      try {
+        const { rows } = await sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
+        res.json(rows[0] || { clerk_id: userId, name: 'Barrister' });
+      } catch (innerErr) {
+        res.json({ clerk_id: userId, name: 'Barrister' });
+      }
     }
   });
 
   // Save Gemini API Key
-  app.post('/api/user/apikey', (req, res) => {
+  app.post('/api/user/apikey', async (req, res) => {
     const { userId } = getAuth(req);
     const { apiKey } = req.body;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-      db.prepare('UPDATE users SET gemini_api_key = ? WHERE clerk_id = ?').run(apiKey, userId);
+      await sql`UPDATE users SET gemini_api_key = ${apiKey} WHERE clerk_id = ${userId}`;
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: 'Failed to save API key' });
@@ -121,13 +150,12 @@ async function startServer() {
     const { message, history = [] } = req.body;
     
     try {
-      const user = db.prepare('SELECT gemini_api_key FROM users WHERE clerk_id = ?').get(userId) as any;
+      const { rows } = await sql`SELECT gemini_api_key FROM users WHERE clerk_id = ${userId}`;
+      const user = rows[0];
       
       const apiKey = user?.gemini_api_key || process.env.GEMINI_API_KEY;
       if (!apiKey) return res.status(400).json({ error: 'Gemini API key missing. Please provide one in settings.' });
 
-      // Call Gemini 2.5 Flash Live (as requested in original prompt)
-      // Note: gemini-2.5-flash-live might be 1.5-flash-8b or 1.5-flash depending on availability
       const response = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
         contents: [...history.map((h: any) => ({ role: h.role === 'ai' ? 'model' : 'user', parts: [{ text: h.text }] })), { role: 'user', parts: [{ text: message }] }]
       });
@@ -146,9 +174,12 @@ async function startServer() {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-      const user = db.prepare('SELECT id FROM users WHERE clerk_id = ?').get(userId) as any;
-      const calls = db.prepare('SELECT * FROM calls WHERE advocate_id = ? ORDER BY timestamp DESC').all(user?.id);
-      res.json({ calls });
+      const userRes = await sql`SELECT id FROM users WHERE clerk_id = ${userId}`;
+      const user = userRes.rows[0];
+      if (!user) return res.json({ calls: [] });
+
+      const { rows } = await sql`SELECT * FROM calls WHERE advocate_id = ${user.id} ORDER BY timestamp DESC`;
+      res.json({ calls: rows });
     } catch (err) {
       res.status(500).json({ error: 'Fetch calls error' });
     }
@@ -158,15 +189,81 @@ async function startServer() {
   app.post('/api/calls/webhook', async (req, res) => {
     const { caller, phone, status, duration, summary, advocateEmail } = req.body;
     try {
-      const user = db.prepare('SELECT id FROM users WHERE email = ?').get(advocateEmail) as any;
-      const info = db.prepare('INSERT INTO calls (caller, phone, status, duration, summary, advocate_id) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(caller, phone, status, duration, summary, user?.id);
+      const userRes = await sql`SELECT id FROM users WHERE email = ${advocateEmail}`;
+      const user = userRes.rows[0];
+      if (!user) return res.status(404).json({ error: 'Advocate not found' });
+
+      const info = await sql`
+        INSERT INTO calls (caller, phone, status, duration, summary, advocate_id) 
+        VALUES (${caller}, ${phone}, ${status}, ${duration}, ${summary}, ${user.id})
+        RETURNING *
+      `;
       
-      const call = db.prepare('SELECT * FROM calls WHERE id = ?').get(info.lastInsertRowid);
+      const call = info.rows[0];
       broadcastCall(call);
       res.json({ success: true, call });
     } catch (err) {
+      console.error('Webhook error:', err);
       res.status(500).json({ error: 'Webhook error' });
+    }
+  });
+
+  // --- Agency Endpoints ---
+  app.get('/api/agency/advocates', async (req, res) => {
+    const { userId } = getAuth(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+    
+    try {
+      const adminRes = await sql`SELECT role FROM users WHERE clerk_id = ${userId}`;
+      if (adminRes.rows[0]?.role !== 'agency') return res.status(403).json({ error: 'Forbidden' });
+
+      const { rows } = await sql`SELECT * FROM users WHERE role = 'advocate' ORDER BY joined_at DESC`;
+      res.json(rows);
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to fetch advocates' });
+    }
+  });
+
+  app.get('/api/agency/stats', async (req, res) => {
+    const { userId } = getAuth(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    try {
+      const advCount = await sql`SELECT COUNT(*) FROM users WHERE role = 'advocate'`;
+      const affCount = await sql`SELECT COUNT(*) FROM users WHERE role = 'affiliate'`;
+      const callCount = await sql`SELECT COUNT(*) FROM calls`;
+      
+      res.json({
+        totalAdvocates: parseInt(advCount.rows[0].count),
+        affiliates: parseInt(affCount.rows[0].count),
+        totalCases: parseInt(callCount.rows[0].count),
+        pending: 0
+      });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to fetch stats' });
+    }
+  });
+
+  // --- Affiliate Endpoints ---
+  app.get('/api/affiliate/dashboard', async (req, res) => {
+    const { userId } = getAuth(req);
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    try {
+      const { rows } = await sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
+      const user = rows[0];
+      if (!user || user.role !== 'affiliate') return res.status(403).json({ error: 'Forbidden' });
+
+      const referrals = await sql`SELECT * FROM users WHERE referred_by = ${user.code}`;
+      
+      res.json({
+        aff: user,
+        subscribers: referrals.rows,
+        earned: referrals.rows.length * 500, // Example commission
+        paymentHistory: []
+      });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to fetch affiliate metrics' });
     }
   });
 
