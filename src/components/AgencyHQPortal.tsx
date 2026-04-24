@@ -88,9 +88,18 @@ export default function AgencyHQPortal({ user, onLogout }: { user: any, onLogout
       {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="h-16 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-8">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-bold text-slate-400">Nexus Justice</span>
-            <span className="text-amber-500 font-black italic">Agency HQ</span>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold text-slate-400">Nexus Justice</span>
+              <span className="text-amber-500 font-black italic">Agency HQ</span>
+            </div>
+            <span className="text-slate-800">|</span>
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-950 border border-slate-800">
+              <div className={`w-1.5 h-1.5 rounded-full ${user.gemini_api_key ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-rose-500'}`} />
+              <span className={`text-[9px] font-black uppercase tracking-widest ${user.gemini_api_key ? 'text-emerald-500' : 'text-rose-500'}`}>
+                {user.gemini_api_key ? 'Gemini 2.0 Flash Active' : 'Gemini Not Active'}
+              </span>
+            </div>
           </div>
           <div className="flex gap-4">
             <div className="hidden md:flex px-4 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-full text-[10px] font-bold text-amber-500 uppercase tracking-wider items-center">
