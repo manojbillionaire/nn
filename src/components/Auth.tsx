@@ -26,22 +26,22 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
         try {
           const text = await navigator.clipboard.readText();
           if (text.startsWith('AIza')) {
-            // Visual hint only, don't auto-fill without user action for privacy/control
             console.log('API key detected in clipboard');
           }
         } catch (e) { /* ignore */ }
       };
       checkClipboard();
-      // Auto-focus
-      inputRef.current?.focus();
+      // Auto-focus after a short delay for animation
+      setTimeout(() => inputRef.current?.focus(), 400);
     }
   }, [currentStep, apiKey]);
 
-  // If Clerk is authenticated but we don't have a backend user yet, 
-  // show the API key step or a "Finish Profile" step
-  if (isClerkAuthenticated && !showApiKeyStep) {
-    setShowApiKeyStep(true);
-  }
+  // English Voice Assistance (Visual Representation)
+  const voiceMessages = {
+    1: "Navigate to Google AI Studio to generate your unique Gemini key.",
+    2: "Copy the key securely to your device's clipboard now.",
+    3: "Paste the key below to unlock your legal engine."
+  };
 
   const handleSaveApiKey = async () => {
     if (!isValidKey) return;
@@ -49,13 +49,12 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
     try {
       await api.post('/api/user/apikey', { apiKey });
       setIsSuccess(true);
-      // Wait for animation
       setTimeout(async () => {
         const res = await api.get('/api/user/profile');
         onLogin(res.data);
       }, 2000);
     } catch (err) {
-      alert('Failed to activate AI Engine. Please check your key.');
+      alert('Activation failed. Please check your network or key.');
       setLoading(false);
     }
   };
@@ -65,7 +64,7 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
       const text = await navigator.clipboard.readText();
       setApiKey(text);
     } catch (e) {
-      alert('Allow clipboard access to paste or paste manually.');
+      alert('Clipboard access denied.');
     }
   };
 
@@ -77,7 +76,7 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
           animate={{ opacity: 1, scale: 1 }}
           className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-[40px] p-8 md:p-12 shadow-2xl relative overflow-hidden"
         >
-          {/* Animated Glow for Success */}
+          {/* Success Glow */}
           <AnimatePresence>
             {isSuccess && (
               <motion.div 
@@ -100,14 +99,17 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                       className="absolute inset-0 bg-amber-500 rounded-[30px] blur-xl -z-10"
                     />
                   </div>
-                  <h2 className="text-3xl font-black text-white text-center tracking-tight mb-2">Activate AI Engine</h2>
+                  <h2 className="text-3xl font-black text-white text-center tracking-tight mb-2">Activate AI</h2>
                   <div className="flex items-center gap-2 px-4 py-1 bg-slate-800/80 rounded-full border border-slate-700/50">
                     <Volume2 className="w-3 h-3 text-amber-500 animate-pulse" />
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">Nexus Voice: Step {currentStep} of 3</span>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">Nexus Voice (EN): Step {currentStep}</span>
                   </div>
+                  <p className="mt-4 text-slate-500 text-[10px] font-medium text-center italic max-w-[200px]">
+                    "{voiceMessages[currentStep as keyof typeof voiceMessages]}"
+                  </p>
                 </div>
 
-                {/* English Steps Progress */}
+                {/* Malayalam Steps Progress */}
                 <div className="flex justify-between mb-10 px-4">
                   {[1, 2, 3].map((s) => (
                     <div key={s} className="flex flex-col items-center gap-2">
@@ -115,7 +117,7 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                         {currentStep > s ? <CheckCircle2 className="w-5 h-5" /> : s}
                       </div>
                       <div className={`text-[10px] font-black uppercase tracking-tighter ${currentStep === s ? 'text-amber-500' : 'text-slate-600'}`}>
-                        {s === 1 ? 'OBTAIN' : s === 2 ? 'COPY' : 'PASTE'}
+                        {s === 1 ? 'ലഭിക്കുക' : s === 2 ? 'പകർത്തുക' : 'ചേർക്കുക'}
                       </div>
                     </div>
                   ))}
@@ -132,7 +134,7 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                     >
                       <div className="bg-slate-950/50 border border-slate-800 rounded-3xl p-6">
                         <p className="text-slate-400 text-sm leading-relaxed mb-6 font-medium">
-                          Navigate to Google AI Studio to generate your unique, free Gemini API key.
+                          Generate your free API key at Google AI Studio.
                         </p>
                         <a 
                           href="https://aistudio.google.com/app/apikey" 
@@ -141,7 +143,7 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                           onClick={() => setCurrentStep(2)}
                           className="flex items-center justify-between w-full bg-amber-500 hover:bg-amber-400 text-slate-950 p-5 rounded-2xl transition-all shadow-xl shadow-amber-500/10 group font-bold"
                         >
-                          <span>Get Free API Key</span>
+                          <span>Obtain Free API Key</span>
                           <ExternalLink className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
                         </a>
                       </div>
@@ -154,20 +156,18 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                       initial={{ opacity: 0, x: 20 }}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: -20 }}
-                      className="space-y-6"
                     >
                       <div className="bg-slate-950/50 border border-slate-800 rounded-3xl p-6">
                         <p className="text-slate-400 text-sm leading-relaxed mb-6 font-medium">
-                          Copy the API key securely from the Google dashboard to your clipboard.
+                          Make sure to copy the key (AIza...) to your clipboard.
                         </p>
                         <button 
                           onClick={() => setCurrentStep(3)}
                           className="flex items-center justify-center gap-3 w-full bg-slate-800 hover:bg-slate-700 text-white p-5 rounded-2xl border border-slate-700 transition-all font-bold"
                         >
-                          I Have Copied the Key <ChevronRight size={20} />
+                          Key Copied <ChevronRight size={20} />
                         </button>
                       </div>
-                      <button onClick={() => setCurrentStep(1)} className="w-full text-slate-500 text-[10px] font-bold uppercase tracking-widest hover:text-white transition-colors">Go Back</button>
                     </motion.div>
                   )}
 
@@ -177,10 +177,9 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                       initial={{ opacity: 0, x: 20 }}
                       animate={{ opacity: 1, x: 0 }}
                       exit={{ opacity: 0, x: -20 }}
-                      className="space-y-6"
                     >
-                      <div className="bg-slate-950/50 border border-slate-800 rounded-3xl p-6 relative overflow-hidden">
-                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 ml-1 italic">Security Input (Paste Key)</label>
+                      <div className="bg-slate-950/50 border border-slate-800 rounded-3xl p-6 relative">
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3 ml-1 italic">Security Input (ചേർക്കുക)</label>
                         
                         <div className="relative mb-6">
                           <input
@@ -196,9 +195,8 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                             type="button"
                             onClick={handlePaste}
                             className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-amber-500 transition-colors"
-                            title="Paste from clipboard"
                           >
-                            <Clipboard size={18} />
+                            <Clipboard size={18} title="Click to Paste" />
                           </button>
                         </div>
 
@@ -208,14 +206,8 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                             animate={{ opacity: 1, y: 0 }}
                             className="flex items-center gap-2 text-[10px] font-bold text-emerald-500 uppercase tracking-widest mb-4"
                           >
-                            <CheckCircle2 size={12} /> API Key Detected & Valid
+                            <CheckCircle2 size={12} /> Key Detected!
                           </motion.div>
-                        )}
-
-                        {!apiKey && (
-                          <p className="text-[9px] text-slate-600 font-medium mb-4 italic">
-                            Hint: Use the 'Paste' icon to auto-fill the key from your clipboard.
-                          </p>
                         )}
 
                         <button
@@ -223,13 +215,20 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                           disabled={loading || !isValidKey}
                           className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-5 rounded-2xl transition-all shadow-xl shadow-amber-500/10 disabled:opacity-20 uppercase tracking-widest text-xs flex items-center justify-center gap-2"
                         >
-                          {loading ? 'Activating Gateway...' : <>Unlock AI Portal <Sparkles size={14} /></>}
+                          {loading ? 'Activating...' : <>Unlock Nexus <Sparkles size={14} /></>}
                         </button>
                       </div>
-                      <button onClick={() => setCurrentStep(2)} className="w-full text-slate-500 text-[10px] font-bold uppercase tracking-widest hover:text-white transition-colors">Go Back</button>
                     </motion.div>
                   )}
                 </AnimatePresence>
+                {currentStep > 1 && (
+                  <button 
+                    onClick={() => setCurrentStep(prev => prev - 1)} 
+                    className="w-full mt-4 text-slate-600 text-[10px] font-bold uppercase tracking-widest hover:text-white transition-colors"
+                  >
+                    Go Back
+                  </button>
+                )}
               </>
             ) : (
               <motion.div 
@@ -246,9 +245,9 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                     className="absolute inset-0 bg-emerald-500 rounded-full"
                   />
                 </div>
-                <h2 className="text-3xl font-black text-white mb-4 italic tracking-tight">Access Granted</h2>
+                <h2 className="text-3xl font-black text-white mb-4 italic tracking-tight">AI Active</h2>
                 <p className="text-slate-400 text-sm font-medium tracking-wide">
-                  Your AI system is now active. Opening the gateway...
+                  Welcome to the Nexus. Your secure legal engine is now active.
                 </p>
               </motion.div>
             )}

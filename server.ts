@@ -78,6 +78,9 @@ async function startServer() {
 
   // --- API Routes ---
 
+  // Health Check
+  app.get('/api/health', (req, res) => res.json({ status: 'ok', mode: process.env.NODE_ENV }));
+
   // User Profile - Automatically syncs Clerk data on request
   app.get('/api/user/profile', async (req, res) => {
     const { userId } = getAuth(req);
@@ -284,25 +287,27 @@ async function startServer() {
     clients.forEach(c => c.res.write(`event: call\ndata: ${JSON.stringify(call)}\n\n`));
   }
 
-  // Vite Integration
   const distPath = path.join(process.cwd(), 'dist');
-  const isProduction = process.env.NODE_ENV === 'production' || process.env.VITE_PROD === 'true';
+  const isProduction = process.env.NODE_ENV === 'production';
   const hasDist = fs.existsSync(distPath);
 
-  console.log(`Starting server in ${isProduction ? 'production' : 'development'} mode...`);
-
-  if (!isProduction || !hasDist) {
-    if (isProduction && !hasDist) {
-      console.warn('Production mode requested but "dist" folder missing. Falling back to development mode.');
-    }
+  if (isProduction && hasDist) {
+    console.log('Serving production build from dist/');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      // Avoid acting on static files that might have been missed
+      if (req.path.includes('.') && !req.path.endsWith('.html')) {
+        return res.status(404).end();
+      }
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  } else {
+    console.log('Starting Vite development server...');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else {
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
   app.listen(PORT, '0.0.0.0', () => {

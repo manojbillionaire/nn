@@ -68,8 +68,9 @@ export default function App() {
       return <AdvocatePortal user={user} onLogout={handleLogout} />;
     case 'affiliate':
       return <AffiliatePortal user={user} onLogout={handleLogout} />;
+    case 'agency':
+      return <AgencyHQPortal user={user} onLogout={handleLogout} />;
     default:
-      // Handle other roles or missing role
       return <AdvocatePortal user={user} onLogout={handleLogout} />;
   }
 }
