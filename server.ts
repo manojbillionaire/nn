@@ -1,6 +1,6 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
-import { sql } from '@vercel/postgres';
+import Database from 'better-sqlite3';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -14,15 +14,31 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Initialize SQLite Database
+const db = new Database('nexus_justice.db');
+db.pragma('journal_mode = WAL');
+
+// Simple wrapper to mimic the vercel-postgres interface
+const sql = (strings: TemplateStringsArray, ...values: any[]) => {
+  const query = strings.reduce((acc, str, i) => acc + str + (i < values.length ? '?' : ''), '');
+  const stmt = db.prepare(query);
+  
+  if (query.trim().toUpperCase().startsWith('SELECT')) {
+    return { rows: stmt.all(...values) };
+  } else {
+    const result = stmt.run(...values);
+    return { rows: [], lastInsertRowid: result.lastInsertRowid };
+  }
+};
+
 // Initialize Clerk Client for backend management
 const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
 
 async function initDb() {
   try {
-    // Drop table logic if we need to migration, but usually "CREATE TABLE IF NOT EXISTS" is safer for "auto inject"
-    await sql`
+    sql`
       CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         clerk_id TEXT UNIQUE,
         email TEXT UNIQUE,
         name TEXT,
@@ -33,27 +49,24 @@ async function initDb() {
         referred_by TEXT,
         plan TEXT DEFAULT 'Starter',
         status TEXT DEFAULT 'active',
-        joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
     `;
 
-    await sql`
+    sql`
       CREATE TABLE IF NOT EXISTS calls (
-        id SERIAL PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
         caller TEXT,
         phone TEXT,
         status TEXT CHECK(status IN ('incoming', 'answered', 'ended', 'missed')) DEFAULT 'incoming',
         duration TEXT,
         summary TEXT,
         advocate_id INTEGER REFERENCES users(id),
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       );
     `;
-
-    // Ensure first user or specific emails are admins/agency if needed
-    // But we'll handle role assignment via the UI or manual DB for now
     
-    console.log('Database initialized successfully');
+    console.log('Database initialized successfully (SQLite)');
   } catch (err) {
     console.error('Database initialization error:', err);
   }
@@ -87,7 +100,7 @@ async function startServer() {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     
     try {
-      const { rows } = await sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
+      const { rows } = sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
       let user = rows[0];
       
       if (!user) {
@@ -98,25 +111,26 @@ async function startServer() {
         const barNo = 'BC/' + Math.floor(Math.random() * 10000);
         const code = 'NJ' + Math.random().toString(36).substring(2, 8).toUpperCase();
         
-        const result = await sql`
+        const result = sql`
           INSERT INTO users (clerk_id, email, name, bar_council_no, code) 
           VALUES (${userId}, ${email}, ${name}, ${barNo}, ${code})
-          RETURNING *
         `;
-        user = result.rows[0];
+        // In my simple wrapper, I'll need to fetch the inserted user
+        const newUserRes = sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
+        user = newUserRes.rows[0];
       } else if (!user.email || !user.name) {
         // Update existing stub users who logged in before we added Clerk API sync
         const clerkUser = await clerkClient.users.getUser(userId);
         const email = clerkUser.emailAddresses[0]?.emailAddress;
         const name = `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || 'Barrister';
         
-        const result = await sql`
+        sql`
           UPDATE users 
           SET email = ${email}, name = ${name} 
           WHERE clerk_id = ${userId}
-          RETURNING *
         `;
-        user = result.rows[0];
+        const updatedUserRes = sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
+        user = updatedUserRes.rows[0];
       }
       
       res.json(user);
@@ -124,7 +138,7 @@ async function startServer() {
       console.error('Clerk Sync Error:', err);
       // Fallback: try to return whatever we have
       try {
-        const { rows } = await sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
+        const { rows } = sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
         res.json(rows[0] || { clerk_id: userId, name: 'Barrister' });
       } catch (innerErr) {
         res.json({ clerk_id: userId, name: 'Barrister' });
@@ -139,7 +153,7 @@ async function startServer() {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-      await sql`UPDATE users SET gemini_api_key = ${apiKey} WHERE clerk_id = ${userId}`;
+      sql`UPDATE users SET gemini_api_key = ${apiKey} WHERE clerk_id = ${userId}`;
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: 'Failed to save API key' });
@@ -154,12 +168,13 @@ async function startServer() {
     const { message, history = [] } = req.body;
     
     try {
-      const { rows } = await sql`SELECT gemini_api_key FROM users WHERE clerk_id = ${userId}`;
+      const { rows } = sql`SELECT gemini_api_key FROM users WHERE clerk_id = ${userId}`;
       const user = rows[0];
       
       const apiKey = user?.gemini_api_key || process.env.GEMINI_API_KEY;
       if (!apiKey) return res.status(400).json({ error: 'Gemini API key missing. Please provide one in settings.' });
 
+      // Using Gemini 2.0 Flash
       const response = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
         contents: [...history.map((h: any) => ({ role: h.role === 'ai' ? 'model' : 'user', parts: [{ text: h.text }] })), { role: 'user', parts: [{ text: message }] }]
       });
@@ -178,11 +193,11 @@ async function startServer() {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-      const userRes = await sql`SELECT id FROM users WHERE clerk_id = ${userId}`;
+      const userRes = sql`SELECT id FROM users WHERE clerk_id = ${userId}`;
       const user = userRes.rows[0];
       if (!user) return res.json({ calls: [] });
 
-      const { rows } = await sql`SELECT *, timestamp::text as timestamp FROM calls WHERE advocate_id = ${user.id} ORDER BY timestamp DESC`;
+      const { rows } = sql`SELECT *, STRFTIME('%Y-%m-%d %H:%M:%S', timestamp) as timestamp FROM calls WHERE advocate_id = ${user.id} ORDER BY timestamp DESC`;
       res.json({ calls: rows });
     } catch (err) {
       res.status(500).json({ error: 'Fetch calls error' });
@@ -193,17 +208,17 @@ async function startServer() {
   app.post('/api/calls/webhook', async (req, res) => {
     const { caller, phone, status, duration, summary, advocateEmail } = req.body;
     try {
-      const userRes = await sql`SELECT id FROM users WHERE email = ${advocateEmail}`;
+      const userRes = sql`SELECT id FROM users WHERE email = ${advocateEmail}`;
       const user = userRes.rows[0];
       if (!user) return res.status(404).json({ error: 'Advocate not found' });
 
-      const info = await sql`
+      sql`
         INSERT INTO calls (caller, phone, status, duration, summary, advocate_id) 
         VALUES (${caller}, ${phone}, ${status}, ${duration}, ${summary}, ${user.id})
-        RETURNING *
       `;
       
-      const call = info.rows[0];
+      const lastCallRes = sql`SELECT * FROM calls WHERE id = last_insert_rowid()`;
+      const call = lastCallRes.rows[0];
       broadcastCall(call);
       res.json({ success: true, call });
     } catch (err) {
@@ -218,10 +233,10 @@ async function startServer() {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     
     try {
-      const adminRes = await sql`SELECT role FROM users WHERE clerk_id = ${userId}`;
+      const adminRes = sql`SELECT role FROM users WHERE clerk_id = ${userId}`;
       if (adminRes.rows[0]?.role !== 'agency') return res.status(403).json({ error: 'Forbidden' });
 
-      const { rows } = await sql`SELECT *, joined_at::text as joined_at FROM users WHERE role = 'advocate' ORDER BY joined_at DESC`;
+      const { rows } = sql`SELECT *, STRFTIME('%Y-%m-%d %H:%M:%S', joined_at) as joined_at FROM users WHERE role = 'advocate' ORDER BY joined_at DESC`;
       res.json(rows);
     } catch (err) {
       res.status(500).json({ error: 'Failed to fetch advocates' });
@@ -233,9 +248,9 @@ async function startServer() {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-      const advCount = await sql`SELECT COUNT(*) FROM users WHERE role = 'advocate'`;
-      const affCount = await sql`SELECT COUNT(*) FROM users WHERE role = 'affiliate'`;
-      const callCount = await sql`SELECT COUNT(*) FROM calls`;
+      const advCount = sql`SELECT COUNT(*) as count FROM users WHERE role = 'advocate'`;
+      const affCount = sql`SELECT COUNT(*) as count FROM users WHERE role = 'affiliate'`;
+      const callCount = sql`SELECT COUNT(*) as count FROM calls`;
       
       res.json({
         totalAdvocates: parseInt(advCount.rows[0].count),
@@ -254,11 +269,11 @@ async function startServer() {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-      const { rows } = await sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
+      const { rows } = sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
       const user = rows[0];
       if (!user || user.role !== 'affiliate') return res.status(403).json({ error: 'Forbidden' });
 
-      const referrals = await sql`SELECT *, joined_at::text as joined_at FROM users WHERE referred_by = ${user.code}`;
+      const referrals = sql`SELECT *, STRFTIME('%Y-%m-%d %H:%M:%S', joined_at) as joined_at FROM users WHERE referred_by = ${user.code}`;
       
       res.json({
         aff: user,

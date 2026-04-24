@@ -36,12 +36,28 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
     }
   }, [currentStep, apiKey]);
 
-  // English Voice Assistance (Visual Representation)
+  // English Voice Assistance
   const voiceMessages = {
     1: "Navigate to Google AI Studio to generate your unique Gemini key.",
     2: "Copy the key securely to your device's clipboard now.",
     3: "Paste the key below to unlock your legal engine."
   };
+
+  const speak = (text: string) => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+      utterance.rate = 1;
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  useEffect(() => {
+    if (showApiKeyStep && !isSuccess) {
+      speak(voiceMessages[currentStep as keyof typeof voiceMessages]);
+    }
+  }, [currentStep, showApiKeyStep, isSuccess]);
 
   const handleSaveApiKey = async () => {
     if (!isValidKey) return;
@@ -49,6 +65,7 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
     try {
       await api.post('/api/user/apikey', { apiKey });
       setIsSuccess(true);
+      speak("Access granted. Your engine is now live.");
       setTimeout(async () => {
         const res = await api.get('/api/user/profile');
         onLogin(res.data);
