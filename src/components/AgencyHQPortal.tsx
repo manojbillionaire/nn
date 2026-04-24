@@ -122,20 +122,25 @@ export default function AgencyHQPortal({ user, onLogout }: { user: any, onLogout
                   <h3 className="text-xs font-bold text-amber-500 uppercase tracking-widest">Recent Advocate Registrations</h3>
                 </div>
                 <div className="divide-y divide-slate-800">
-                  {advocates.slice(0, 5).map((a) => (
-                    <div key={a.id} className="px-6 py-4 flex items-center gap-4 hover:bg-slate-800/50 transition-colors">
-                      <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400 font-bold">
-                        {a.name?.[0]}
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm font-bold text-white">{a.name}</p>
-                        <p className="text-xs text-slate-500">{a.email}</p>
-                      </div>
-                      <span className="text-[10px] font-bold uppercase px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-                        {a.status}
-                      </span>
-                    </div>
-                  ))}
+                      {advocates.slice(0, 5).map((a) => (
+                        <div key={a.id} className="px-6 py-4 flex items-center gap-4 hover:bg-slate-800/50 transition-colors">
+                          <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400 font-bold">
+                            {a.name?.[0] || '?'}
+                          </div>
+                          <div className="flex-1">
+                            <p className="text-sm font-bold text-white tracking-tight">{a.name || 'Anonymous'}</p>
+                            <p className="text-[10px] text-slate-500 font-mono">{a.email}</p>
+                          </div>
+                          <span className="text-[10px] font-bold uppercase px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
+                            {a.status}
+                          </span>
+                        </div>
+                      ))}
+                      {advocates.length === 0 && (
+                        <div className="px-6 py-12 text-center text-slate-600 text-xs uppercase tracking-widest font-bold">
+                          No advocates registered yet
+                        </div>
+                      )}
                 </div>
               </div>
             </div>
@@ -170,7 +175,7 @@ export default function AgencyHQPortal({ user, onLogout }: { user: any, onLogout
                       <tr key={a.id} className="hover:bg-slate-800/30 transition-colors">
                         <td className="px-6 py-4 text-sm font-bold">{a.name}</td>
                         <td className="px-6 py-4 text-sm text-slate-400">{a.email}</td>
-                        <td className="px-6 py-4 text-sm text-indigo-400 font-mono">{a.barCouncilNo}</td>
+                        <td className="px-6 py-4 text-sm text-indigo-400 font-mono">{a.bar_council_no}</td>
                         <td className="px-6 py-4">
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                             {a.plan || 'Starter'}
@@ -181,9 +186,16 @@ export default function AgencyHQPortal({ user, onLogout }: { user: any, onLogout
                             {a.status}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-sm text-slate-500">{a.joinedAt?.slice(0, 10)}</td>
+                        <td className="px-6 py-4 text-sm text-slate-500 font-mono">{a.joined_at?.slice(0, 10)}</td>
                       </tr>
                     ))}
+                    {filtered.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="px-6 py-12 text-center text-slate-600 text-xs italic">
+                          No advocates found matching your search.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>

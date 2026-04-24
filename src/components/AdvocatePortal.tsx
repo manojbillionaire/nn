@@ -219,8 +219,8 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
                   {voiceRecords.map(r => (
                     <div key={r.id} className="p-5 bg-slate-900/50 border border-slate-800 rounded-2xl hover:border-slate-700 transition-all cursor-pointer">
                       <div className="flex justify-between mb-2">
-                        <span className="font-bold text-slate-200">{r.client}</span>
-                        <span className="text-slate-500 text-xs font-mono">{r.date}</span>
+                        <span className="font-bold text-slate-200">{r.caller || r.client}</span>
+                        <span className="text-slate-500 text-xs font-mono">{(r.timestamp || r.date)?.slice(0, 10)}</span>
                       </div>
                       <p className="text-sm text-slate-400 leading-relaxed">{r.summary}</p>
                     </div>
@@ -547,8 +547,8 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
                   {voiceRecords.slice(0, 3).map(r => (
                     <div key={r.id} className="p-4 bg-slate-900/50 border border-slate-800 rounded-2xl flex items-center justify-between">
                       <div>
-                        <div className="text-sm font-bold">{r.client}</div>
-                        <div className="text-[10px] text-slate-500">{r.duration} · {r.date}</div>
+                        <div className="text-sm font-bold">{r.caller || r.client}</div>
+                        <div className="text-[10px] text-slate-500">{r.duration} · {(r.timestamp || r.date)?.slice(0, 10)}</div>
                       </div>
                       <Icon path="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" size={14} />
                     </div>

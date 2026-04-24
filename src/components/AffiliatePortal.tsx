@@ -173,7 +173,7 @@ export default function AffiliatePortal({ user, onLogout }: { user: any, onLogou
                             {s.status}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-sm text-slate-500">{s.joinedAt?.slice(0, 10)}</td>
+                        <td className="px-6 py-4 text-sm text-slate-500 font-mono">{(s.joined_at || s.joinedAt)?.slice(0, 10)}</td>
                       </tr>
                     ))}
                   </tbody>

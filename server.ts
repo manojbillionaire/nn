@@ -4,6 +4,7 @@ import { sql } from '@vercel/postgres';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
 import { clerkMiddleware, getAuth, createClerkClient } from '@clerk/express';
@@ -178,7 +179,7 @@ async function startServer() {
       const user = userRes.rows[0];
       if (!user) return res.json({ calls: [] });
 
-      const { rows } = await sql`SELECT * FROM calls WHERE advocate_id = ${user.id} ORDER BY timestamp DESC`;
+      const { rows } = await sql`SELECT *, timestamp::text as timestamp FROM calls WHERE advocate_id = ${user.id} ORDER BY timestamp DESC`;
       res.json({ calls: rows });
     } catch (err) {
       res.status(500).json({ error: 'Fetch calls error' });
@@ -217,7 +218,7 @@ async function startServer() {
       const adminRes = await sql`SELECT role FROM users WHERE clerk_id = ${userId}`;
       if (adminRes.rows[0]?.role !== 'agency') return res.status(403).json({ error: 'Forbidden' });
 
-      const { rows } = await sql`SELECT * FROM users WHERE role = 'advocate' ORDER BY joined_at DESC`;
+      const { rows } = await sql`SELECT *, joined_at::text as joined_at FROM users WHERE role = 'advocate' ORDER BY joined_at DESC`;
       res.json(rows);
     } catch (err) {
       res.status(500).json({ error: 'Failed to fetch advocates' });
@@ -254,7 +255,7 @@ async function startServer() {
       const user = rows[0];
       if (!user || user.role !== 'affiliate') return res.status(403).json({ error: 'Forbidden' });
 
-      const referrals = await sql`SELECT * FROM users WHERE referred_by = ${user.code}`;
+      const referrals = await sql`SELECT *, joined_at::text as joined_at FROM users WHERE referred_by = ${user.code}`;
       
       res.json({
         aff: user,
@@ -284,14 +285,22 @@ async function startServer() {
   }
 
   // Vite Integration
-  if (process.env.NODE_ENV !== 'production') {
+  const distPath = path.join(process.cwd(), 'dist');
+  const isProduction = process.env.NODE_ENV === 'production' || process.env.VITE_PROD === 'true';
+  const hasDist = fs.existsSync(distPath);
+
+  console.log(`Starting server in ${isProduction ? 'production' : 'development'} mode...`);
+
+  if (!isProduction || !hasDist) {
+    if (isProduction && !hasDist) {
+      console.warn('Production mode requested but "dist" folder missing. Falling back to development mode.');
+    }
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
