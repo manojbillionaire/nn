@@ -852,6 +852,7 @@ function GeminiKeyModal({ onClose, onSuccess }: { onClose: () => void, onSuccess
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [apiKeyError, setApiKeyError] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
   const isValidKey = apiKey.startsWith('AIza') && apiKey.length > 20;
@@ -890,15 +891,23 @@ function GeminiKeyModal({ onClose, onSuccess }: { onClose: () => void, onSuccess
   const handleSave = async () => {
     if (!isValidKey) return;
     setLoading(true);
+    setApiKeyError('');
     try {
       const token = await getToken();
       if (token) setAuthToken(token);
-      await api.post('/api/user/apikey', { apiKey });
-      setIsSuccess(true);
-      speak("Access granted. Your engine is now live.");
-      setTimeout(() => onSuccess(), 2000);
-    } catch (err) {
-      alert('Activation failed.');
+      const res = await api.post('/api/user/apikey', { apiKey });
+      if (res.data?.success) {
+        setIsSuccess(true);
+        speak("Access granted. Your engine is now live.");
+        setTimeout(() => onSuccess(), 2000);
+      } else {
+        setApiKeyError('Failed to save key. Please try again.');
+        setLoading(false);
+      }
+    } catch (err: any) {
+      console.error('apikey save error:', err);
+      const msg = err?.response?.data?.error || 'Failed to save API key.';
+      setApiKeyError(msg);
       setLoading(false);
     }
   };
@@ -1001,6 +1010,11 @@ function GeminiKeyModal({ onClose, onSuccess }: { onClose: () => void, onSuccess
                       <button onClick={handleSave} disabled={loading || !isValidKey} className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-4 rounded-xl transition-all disabled:opacity-20 uppercase tracking-widest text-[10px] flex items-center justify-center gap-2">
                         {loading ? 'Activating...' : <>Unlock AI <Sparkles size={14} /></>}
                       </button>
+                      {apiKeyError && (
+                        <p className="text-rose-500 text-[10px] font-bold uppercase tracking-widest mt-4 text-center animate-pulse">
+                          {apiKeyError}
+                        </p>
+                      )}
                     </div>
                   </motion.div>
                 )}

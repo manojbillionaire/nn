@@ -1,14 +1,9 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 
-let aiInstance: GoogleGenAI | null = null;
-
 export function getGemini(apiKey?: string) {
   const key = apiKey || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined);
-  
-  if (!aiInstance && key) {
-    aiInstance = new GoogleGenAI({ apiKey: key });
-  }
-  return aiInstance;
+  if (!key) return null;
+  return new GoogleGenAI({ apiKey: key });
 }
 
 export async function speakWithGemini(text: string, apiKey?: string) {

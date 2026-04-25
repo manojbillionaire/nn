@@ -28,7 +28,7 @@ const sql = (strings: TemplateStringsArray, ...values: any[]) => {
     return { rows: stmt.all(...values) };
   } else {
     const result = stmt.run(...values);
-    return { rows: [], lastInsertRowid: result.lastInsertRowid };
+    return { rows: [], lastInsertRowid: result.lastInsertRowid, changes: result.changes };
   }
 };
 
@@ -154,9 +154,13 @@ async function startServer() {
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-      sql`UPDATE users SET gemini_api_key = ${apiKey} WHERE clerk_id = ${userId}`;
+      const result = sql`UPDATE users SET gemini_api_key = ${apiKey} WHERE clerk_id = ${userId}`;
+      if ((result as any).changes === 0) {
+        return res.status(404).json({ error: 'User not found. Key not saved.' });
+      }
       res.json({ success: true });
     } catch (err) {
+      console.error('apikey save error:', err);
       res.status(500).json({ error: 'Failed to save API key' });
     }
   });
