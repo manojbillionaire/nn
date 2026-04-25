@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import api from '../api';
-import { UserButton } from "@clerk/clerk-react";
+import api, { setAuthToken } from '../api';
+import { UserButton, useAuth } from "@clerk/clerk-react";
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Key, 
@@ -224,38 +224,50 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
             <div className="p-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {!user.gemini_api_key && (
                 <motion.div 
-                  initial={{ opacity: 0, y: -20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="col-span-full bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 flex items-center justify-between gap-4"
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="col-span-full bg-rose-500/10 border-2 border-rose-500/20 rounded-[32px] p-6 flex flex-col md:flex-row items-center justify-between gap-6 shadow-[0_0_40px_rgba(244,63,94,0.05)]"
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-amber-500/20 rounded-xl flex items-center justify-center text-amber-500">
-                      <AlertTriangle size={20} />
+                  <div className="flex items-center gap-4 text-center md:text-left">
+                    <div className="w-14 h-14 bg-rose-500/20 rounded-2xl flex items-center justify-center text-rose-500 shadow-lg shadow-rose-500/20">
+                      <AlertTriangle size={28} />
                     </div>
                     <div>
-                      <p className="text-sm font-bold text-white">AI Engine Offline</p>
-                      <p className="text-xs text-slate-400">Your Gemini 2.0 Flash key is missing or inactive. Click 'Get API Key' below to activate your legal engine.</p>
+                      <h4 className="text-lg font-black text-white italic uppercase tracking-tight">AI Engine Temporarily Offline</h4>
+                      <p className="text-xs text-rose-200/60 font-medium max-w-md">Your legal intelligence engine requires a Gemini 2.0 Flash API key. Click the "Get api key" tab in the command center below to activate.</p>
                     </div>
                   </div>
                   <button 
                     onClick={() => setShowApiKeyModal(true)}
-                    className="px-4 py-2 bg-amber-500 text-slate-950 font-bold rounded-lg text-xs uppercase tracking-widest hover:bg-amber-400 transition-all shadow-lg shadow-amber-500/20"
+                    className="px-8 py-3 bg-rose-500 text-white font-black rounded-xl text-[10px] uppercase tracking-widest hover:bg-rose-400 transition-all shadow-xl shadow-rose-500/20 active:scale-95"
                   >
-                    Activate Now
+                    Activate Nexus AI
                   </button>
                 </motion.div>
               )}
               <div style={S.card} className="col-span-full lg:col-span-1">
-                <h3 className="text-xl font-bold mb-4 italic">Command Center</h3>
+                <h3 className="text-xl font-bold mb-4 italic text-white flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-indigo-500" />
+                  Command Center
+                </h3>
                 <div className="space-y-4">
-                  <button onClick={() => setView('consult')} className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold transition-all shadow-lg shadow-indigo-500/20">Open AI Consultant</button>
-                  <button onClick={() => setView('writing-desk')} className="w-full py-4 bg-slate-800 hover:bg-slate-700 rounded-2xl font-bold border border-slate-700 transition-all">Open Writing Desk</button>
+                  <button onClick={() => setView('consult')} className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2">
+                    Open AI Consultant
+                  </button>
+                  <button onClick={() => setView('writing-desk')} className="w-full py-4 bg-slate-800 hover:bg-slate-700 rounded-2xl font-bold border border-slate-700 transition-all">
+                    Open Writing Desk
+                  </button>
                   <button 
                     onClick={() => setShowApiKeyModal(true)} 
                     disabled={!!user.gemini_api_key}
-                    className={`w-full py-4 rounded-2xl font-bold transition-all border ${user.gemini_api_key ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' : 'bg-amber-500 text-slate-950 border-amber-500 shadow-lg shadow-amber-500/20 hover:bg-amber-400'}`}
+                    className={`w-full py-4 rounded-2xl font-bold transition-all border flex items-center justify-center gap-2 ${
+                      user.gemini_api_key 
+                        ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
+                        : 'bg-amber-500 text-slate-950 border-amber-500 shadow-lg shadow-[0_0_20px_rgba(245,158,11,0.2)] hover:bg-amber-400'
+                    }`}
                   >
-                    {user.gemini_api_key ? 'API Key Active' : 'Get API Key'}
+                    {!user.gemini_api_key && <Sparkles size={16} className="animate-pulse" />}
+                    {user.gemini_api_key ? 'Get api key' : 'Get api key'}
                   </button>
                   <button onClick={async () => {
                     await api.post('/api/calls/webhook', {
@@ -264,7 +276,9 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
                       status: 'incoming',
                       advocateEmail: user.email
                     });
-                  }} className="w-full py-3 bg-slate-900 border border-slate-800 rounded-xl text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:text-white transition-all">Simulate Incoming Call</button>
+                  }} className="w-full py-4 bg-slate-900 border border-slate-800 rounded-2xl text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:text-white hover:border-slate-700 transition-all">
+                    Simulate Incoming Call
+                  </button>
                 </div>
               </div>
               <div style={S.card} className="lg:col-span-2">
@@ -687,6 +701,7 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
 }
 
 function GeminiKeyModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: () => void }) {
+  const { getToken } = useAuth();
   const [apiKey, setApiKey] = useState('');
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -730,6 +745,8 @@ function GeminiKeyModal({ onClose, onSuccess }: { onClose: () => void, onSuccess
     if (!isValidKey) return;
     setLoading(true);
     try {
+      const token = await getToken();
+      if (token) setAuthToken(token);
       await api.post('/api/user/apikey', { apiKey });
       setIsSuccess(true);
       speak("Access granted. Your engine is now live.");

@@ -1,20 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
-import api from '../api';
+import api, { setAuthToken } from '../api';
 import { motion, AnimatePresence } from 'motion/react';
 import { Shield, Key, ExternalLink, Clipboard, CheckCircle2, ChevronRight, Sparkles, Volume2 } from 'lucide-react';
-import { SignInButton } from '@clerk/clerk-react';
+import { SignInButton, useAuth } from '@clerk/clerk-react';
 
 export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = false }: { 
   onLogin: (user: any) => void, 
   mode?: 'user' | 'agency',
   isClerkAuthenticated?: boolean
 }) {
+  const { getToken } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [showApiKeyStep, setShowApiKeyStep] = useState(false);
+  const [showApiKeyStep, setShowApiKeyStep] = useState(isClerkAuthenticated);
   const [apiKey, setApiKey] = useState('');
   const [currentStep, setCurrentStep] = useState(1);
   const [isSuccess, setIsSuccess] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-trigger if Clerk is already authenticated
+  useEffect(() => {
+    if (isClerkAuthenticated) {
+      setShowApiKeyStep(true);
+    }
+  }, [isClerkAuthenticated]);
 
   // Validation
   const isValidKey = apiKey.startsWith('AIza') && apiKey.length > 20;
@@ -63,6 +71,8 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
     if (!isValidKey) return;
     setLoading(true);
     try {
+      const token = await getToken();
+      if (token) setAuthToken(token);
       await api.post('/api/user/apikey', { apiKey });
       setIsSuccess(true);
       speak("Access granted. Your engine is now live.");
@@ -71,6 +81,7 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
         onLogin(res.data);
       }, 2000);
     } catch (err) {
+      console.error('Activation error:', err);
       alert('Activation failed. Please check your network or key.');
       setLoading(false);
     }
