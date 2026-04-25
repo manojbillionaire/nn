@@ -338,12 +338,12 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800">
               <div className={`w-1.5 h-1.5 rounded-full ${user.gemini_api_key ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-rose-500'}`} />
               <span className={`text-[9px] font-black uppercase tracking-widest ${user.gemini_api_key ? 'text-emerald-500' : 'text-rose-500'}`}>
-                {user.gemini_api_key ? 'NEXUS AI ACTIVE' : 'AI OFFLINE'}
+                {user.gemini_api_key ? 'GEMINI 2.5 FLASH ACTIVE' : 'AI OFFLINE'}
               </span>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <span style={{ fontSize: 12, fontWeight: 900, color: '#fff' }} className="hidden sm:inline">Nexus Justice <span style={{ color: '#6366f1' }}>v3.1</span></span>
+            <span style={{ fontSize: 12, fontWeight: 900, color: '#fff' }} className="hidden sm:inline">Nexus Justice <span style={{ color: '#6366f1' }}>v3.2</span></span>
             <UserButton afterSignOutUrl="/" />
           </div>
         </header>

@@ -97,7 +97,7 @@ export default function AgencyHQPortal({ user, onLogout }: { user: any, onLogout
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-950 border border-slate-800">
               <div className={`w-1.5 h-1.5 rounded-full ${user.gemini_api_key ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-rose-500'}`} />
               <span className={`text-[9px] font-black uppercase tracking-widest ${user.gemini_api_key ? 'text-emerald-500' : 'text-rose-500'}`}>
-                {user.gemini_api_key ? 'Gemini 2.0 Flash Active' : 'Gemini Not Active'}
+                {user.gemini_api_key ? 'GEMINI 2.5 FLASH ACTIVE' : 'AI OFFLINE'}
               </span>
             </div>
           </div>
