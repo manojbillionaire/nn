@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import api, { setAuthToken } from '../api';
 import { UserButton, useAuth } from "@clerk/clerk-react";
 import { motion, AnimatePresence } from 'motion/react';
-import { speakWithGemini } from "../lib/gemini";
+import { speakWithGemini, consultGemini } from "../lib/gemini";
 import { 
   Key, 
   ExternalLink, 
@@ -12,7 +12,12 @@ import {
   Sparkles, 
   Volume2, 
   AlertTriangle,
-  X
+  X,
+  Camera,
+  Mic,
+  MicOff,
+  Video,
+  VideoOff
 } from 'lucide-react';
 
 const Icon = ({ path, size = 20, strokeWidth = 2 }: { path: string | string[], size?: number, strokeWidth?: number }) => (
@@ -196,12 +201,18 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
 
   // Camera Management
   useEffect(() => {
+    let stream: MediaStream | null = null;
     async function startCam() {
       if (camOn) {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          stream = await navigator.mediaDevices.getUserMedia({ video: true });
           camStreamRef.current = stream;
-          if (videoRef.current) videoRef.current.srcObject = stream;
+          // Use a small delay to ensure video element is mounted
+          setTimeout(() => {
+            if (videoRef.current) {
+              videoRef.current.srcObject = stream;
+            }
+          }, 100);
         } catch (err) {
           console.error("Camera access denied:", err);
           setCamOn(false);
@@ -214,17 +225,27 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
       }
     }
     startCam();
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+    };
   }, [camOn]);
 
   // Microphone Management
   useEffect(() => {
+    let stream: MediaStream | null = null;
     async function startMic() {
       if (voiceAiOn) {
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           micStreamRef.current = stream;
           
           audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+          if (audioContextRef.current.state === 'suspended') {
+            await audioContextRef.current.resume();
+          }
+          
           analyserRef.current = audioContextRef.current.createAnalyser();
           const source = audioContextRef.current.createMediaStreamSource(stream);
           source.connect(analyserRef.current);
@@ -234,7 +255,7 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
           const updateLevel = () => {
             if (!analyserRef.current) return;
             analyserRef.current.getByteFrequencyData(dataArray);
-            const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+            const average = dataArray.reduce((a, b) => Number(a) + Number(b), 0) / dataArray.length;
             setMicLevel(average);
             requestAnimationFrame(updateLevel);
           };
@@ -259,6 +280,11 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
       }
     }
     startMic();
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach(t => t.stop());
+      }
+    };
   }, [voiceAiOn]);
 
   const sendConsult = async () => {
@@ -267,14 +293,24 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
       setShowApiKeyModal(true);
       return;
     }
-    const text = consoleInput.trim(); setConsoleInput('');
+    const text = consoleInput.trim(); 
+    setConsoleInput('');
     setChatHistory(h => [...h, { role: 'user', text, id: Date.now() }]);
     setConsoleLoading(true);
     try {
-      const res = await api.post('/api/ai/consult', { message: text, history: chatHistory });
-      setChatHistory(h => [...h, { role: 'ai', text: res.data.reply, id: Date.now() }]);
-    } catch {
-      setChatHistory(h => [...h, { role: 'ai', text: 'AI service unavailable.', id: Date.now() }]);
+      const reply = await consultGemini(text, chatHistory, user.gemini_api_key);
+      if (reply) {
+        setChatHistory(h => [...h, { role: 'ai', text: reply, id: Date.now() }]);
+        if (voiceAiOn) {
+          setVoiceAiReply(reply.slice(0, 100) + '...');
+          await speakWithGemini(reply, user.gemini_api_key);
+        }
+      } else {
+        throw new Error("No reply from AI");
+      }
+    } catch (err) {
+      console.error("Consult error:", err);
+      setChatHistory(h => [...h, { role: 'ai', text: 'AI service unavailable. Please check your connection or API key.', id: Date.now() }]);
     }
     setConsoleLoading(false);
   };

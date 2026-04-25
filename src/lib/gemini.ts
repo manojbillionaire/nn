@@ -4,6 +4,7 @@ let aiInstance: GoogleGenAI | null = null;
 
 export function getGemini(apiKey?: string) {
   const key = apiKey || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined);
+  
   if (!aiInstance && key) {
     aiInstance = new GoogleGenAI({ apiKey: key });
   }
@@ -14,7 +15,7 @@ export async function speakWithGemini(text: string, apiKey?: string) {
   const ai = getGemini(apiKey);
   if (!ai) {
     console.warn("Gemini AI not initialized. Using fallback SpeechSynthesis.");
-    if ('speechSynthesis' in window) {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(text);
       window.speechSynthesis.speak(utterance);
     }
@@ -22,22 +23,20 @@ export async function speakWithGemini(text: string, apiKey?: string) {
   }
 
   try {
-    const model = ai.getGenerativeModel({ model: "gemini-2.0-flash" });
-    
-    const response = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text }] }],
-      generationConfig: {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-tts-preview",
+      contents: [{ parts: [{ text }] }],
+      config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
           voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: 'Puck' }, // Professional warm voice
-          }
-        }
-      }
+            prebuiltVoiceConfig: { voiceName: 'Zephyr' }, 
+          },
+        },
+      },
     });
 
-    const audioPart = response.response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-    const base64Audio = audioPart?.inlineData?.data;
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     
     if (base64Audio) {
       const audioData = atob(base64Audio);
@@ -58,11 +57,33 @@ export async function speakWithGemini(text: string, apiKey?: string) {
     return false;
   } catch (error) {
     console.error("Gemini TTS Error:", error);
-    // Fallback to basic TTS
-    if ('speechSynthesis' in window) {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(text);
       window.speechSynthesis.speak(utterance);
     }
     return false;
+  }
+}
+
+export async function consultGemini(message: string, history: any[] = [], apiKey?: string) {
+  const ai = getGemini(apiKey);
+  if (!ai) throw new Error("Gemini AI not initialized.");
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.0-flash",
+      contents: [
+        ...history.map(h => ({
+          role: h.role === 'ai' ? 'model' : 'user',
+          parts: [{ text: h.text }]
+        })),
+        { role: 'user', parts: [{ text: message }] }
+      ]
+    });
+
+    return response.text;
+  } catch (error) {
+    console.error("Gemini Consult Error:", error);
+    throw error;
   }
 }

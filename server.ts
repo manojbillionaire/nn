@@ -161,47 +161,6 @@ async function startServer() {
     }
   });
 
-// Initialize Gemini SDK lazily
-const getAI = (key?: string) => {
-  const apiKey = key || process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("API Key missing");
-  return new GoogleGenAI({ apiKey });
-};
-
-  // AI Orchestrator Endpoint
-  app.post('/api/ai/consult', async (req, res) => {
-    const { userId } = getAuth(req);
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
-    const { message, history = [] } = req.body;
-    
-    try {
-      const { rows } = sql`SELECT gemini_api_key FROM users WHERE clerk_id = ${userId}`;
-      const user = rows[0];
-      
-      const apiKey = user?.gemini_api_key || process.env.GEMINI_API_KEY;
-      if (!apiKey) return res.status(400).json({ error: 'Gemini API key missing. Please provide one in settings.' });
-
-      const genAI = getAI(apiKey);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-      const chat = model.startChat({
-        history: history.map((h: any) => ({
-          role: h.role === 'ai' ? 'model' : 'user',
-          parts: [{ text: h.text }]
-        })),
-      });
-
-      const result = await chat.sendMessage(message);
-      const reply = result.response.text();
-      
-      res.json({ reply });
-    } catch (err) {
-      console.error('Gemini error:', err);
-      res.status(500).json({ error: 'AI service error' });
-    }
-  });
-
   // Calls Endpoint
   app.get('/api/calls', async (req, res) => {
     const { userId } = getAuth(req);
