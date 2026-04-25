@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import api, { setAuthToken } from '../api';
 import { UserButton, useAuth } from "@clerk/clerk-react";
 import { motion, AnimatePresence } from 'motion/react';
+import { speakWithGemini } from "../lib/gemini";
 import { 
   Key, 
   ExternalLink, 
@@ -77,6 +78,13 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
   const [consoleLoading, setConsoleLoading] = useState(false);
   const [supportLoading, setSupportLoading] = useState(false);
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [welcomeSpoken, setWelcomeSpoken] = useState(false);
+  const [micLevel, setMicLevel] = useState(0);
+
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const camStreamRef = useRef<MediaStream | null>(null);
 
   const [kbDocs, setKbDocs] = useState([
     { id: 1, category: 'railway', name: 'Railways Act, 1989.pdf', size: '2.4 MB', date: '2026-01-12', pages: 184 },
@@ -167,6 +175,90 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
     });
     return () => sse.close();
   }, []);
+
+  // Personalized Welcome Voice
+  useEffect(() => {
+    if (user.gemini_api_key && !welcomeSpoken && view === 'command') {
+      const triggerWelcome = async () => {
+        try {
+          await speakWithGemini(`Welcome to Nexus Justice, Advocate ${user.name || 'Manoj'}. How can I help you today?`, user.gemini_api_key);
+          setWelcomeSpoken(true);
+        } catch (err) {
+          console.error("Failed to speak welcome:", err);
+        }
+      };
+      // Delay slightly for UI to settle
+      const timer = setTimeout(triggerWelcome, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [user.gemini_api_key, welcomeSpoken, view, user.name]);
+
+  // Camera Management
+  useEffect(() => {
+    async function startCam() {
+      if (camOn) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          camStreamRef.current = stream;
+          if (videoRef.current) videoRef.current.srcObject = stream;
+        } catch (err) {
+          console.error("Camera access denied:", err);
+          setCamOn(false);
+        }
+      } else {
+        if (camStreamRef.current) {
+          camStreamRef.current.getTracks().forEach(t => t.stop());
+          camStreamRef.current = null;
+        }
+      }
+    }
+    startCam();
+  }, [camOn]);
+
+  // Microphone Management
+  useEffect(() => {
+    async function startMic() {
+      if (voiceAiOn) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          micStreamRef.current = stream;
+          
+          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+          analyserRef.current = audioContextRef.current.createAnalyser();
+          const source = audioContextRef.current.createMediaStreamSource(stream);
+          source.connect(analyserRef.current);
+          analyserRef.current.fftSize = 256;
+          
+          const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+          const updateLevel = () => {
+            if (!analyserRef.current) return;
+            analyserRef.current.getByteFrequencyData(dataArray);
+            const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+            setMicLevel(average);
+            requestAnimationFrame(updateLevel);
+          };
+          updateLevel();
+
+          setVoiceAiListening(true);
+        } catch (err) {
+          console.error("Mic access denied:", err);
+          setVoiceAiOn(false);
+        }
+      } else {
+        if (micStreamRef.current) {
+          micStreamRef.current.getTracks().forEach(t => t.stop());
+          micStreamRef.current = null;
+        }
+        if (audioContextRef.current) {
+          audioContextRef.current.close();
+          audioContextRef.current = null;
+        }
+        setVoiceAiListening(false);
+        setMicLevel(0);
+      }
+    }
+    startMic();
+  }, [voiceAiOn]);
 
   const sendConsult = async () => {
     if (!consoleInput.trim() || consoleLoading) return;
@@ -658,20 +750,37 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
           </div>
         )}
 
-        {/* Voice AI Dock */}
-        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-4 pointer-events-none">
+      <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-4 pointer-events-none">
+          {camOn && (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              className="pointer-events-auto w-48 h-32 bg-slate-900 border-2 border-indigo-500 rounded-3xl overflow-hidden shadow-2xl mb-2"
+            >
+              <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover grayscale brightness-125 contrast-75" />
+              <div className="absolute top-2 right-2 flex gap-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+              </div>
+            </motion.div>
+          )}
           {voiceAiOn && (
             <div className="pointer-events-auto bg-slate-900/95 backdrop-blur-2xl border border-slate-700 rounded-3xl p-6 w-96 shadow-[0_20px_50px_rgba(0,0,0,0.5)] border-b-indigo-500/50">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
+                  <div className={`w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] ${micLevel > 10 ? 'animate-pulse scale-125' : ''}`} />
                   <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-500">Nexus Voice Active</span>
                 </div>
-                <div className="flex gap-1">
-                  {[1,2,3,4].map(i => <div key={i} className="w-1 bg-indigo-500/30 rounded-full animate-wave" style={{ height: 12, animationDelay: `${i*0.1}s` }} />)}
+                <div className="flex gap-1.5 items-end h-4">
+                  {[...Array(6)].map((_, i) => (
+                    <motion.div 
+                      key={i} 
+                      animate={{ height: micLevel > 5 ? 4 + (Math.random() * (micLevel / 4)) : 4 }}
+                      className="w-1 bg-indigo-500/50 rounded-full" 
+                    />
+                  ))}
                 </div>
               </div>
-              <p className="text-sm text-slate-200 leading-relaxed italic font-medium">"{voiceAiReply || 'Listening for your command...'}"</p>
+              <p className="text-sm text-slate-200 leading-relaxed italic font-medium">"{voiceAiReply || (micLevel > 10 ? 'Transcribing legal query...' : 'Listening for your command...')}"</p>
             </div>
           )}
           <div className="pointer-events-auto bg-slate-900/90 backdrop-blur-2xl border border-slate-800 rounded-full p-3 flex items-center gap-3 shadow-2xl border-t-white/5">
