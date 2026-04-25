@@ -17,7 +17,11 @@ import {
   Mic,
   MicOff,
   Video,
-  VideoOff
+  VideoOff,
+  Copy,
+  Trash2,
+  Download,
+  RefreshCw
 } from 'lucide-react';
 
 const Icon = ({ path, size = 20, strokeWidth = 2 }: { path: string | string[], size?: number, strokeWidth?: number }) => (
@@ -303,7 +307,9 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
         setChatHistory(h => [...h, { role: 'ai', text: reply, id: Date.now() }]);
         if (voiceAiOn) {
           setVoiceAiReply(reply.slice(0, 100) + '...');
-          await speakWithGemini(reply, user.gemini_api_key);
+          // Sanitize text for TTS: remove asterisks and excessive formatting
+          const cleanText = reply.replace(/\*/g, '').replace(/#/g, '').replace(/_{1,2}/g, '').trim();
+          await speakWithGemini(cleanText, user.gemini_api_key);
         }
       } else {
         throw new Error("No reply from AI");
@@ -313,6 +319,25 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
       setChatHistory(h => [...h, { role: 'ai', text: 'AI service unavailable. Please check your connection or API key.', id: Date.now() }]);
     }
     setConsoleLoading(false);
+  };
+
+  const resetChat = () => {
+    setChatHistory([]);
+    setVoiceAiReply('');
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+  };
+
+  const downloadTextAsFile = (text: string) => {
+    const element = document.createElement("a");
+    const file = new Blob([text], {type: 'text/plain'});
+    element.href = URL.createObjectURL(file);
+    element.download = "nexus_consultation.txt";
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
   };
 
   return (
@@ -452,6 +477,21 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
           {view === 'consult' && (
             <div className="h-full flex flex-col p-6 gap-4">
               <div className="flex-1 bg-slate-900/50 border border-slate-800 rounded-3xl overflow-hidden flex flex-col shadow-2xl">
+                <div className="p-4 bg-slate-900 border-b border-slate-800 flex justify-between items-center px-8">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 bg-indigo-500/20 rounded-lg flex items-center justify-center text-indigo-400">
+                      <Sparkles size={16} />
+                    </div>
+                    <span className="text-sm font-bold uppercase tracking-widest text-slate-300">Nexus Consultant AI</span>
+                  </div>
+                  <button 
+                    onClick={resetChat}
+                    className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl text-xs font-bold transition-all border border-slate-700"
+                  >
+                    <RefreshCw size={14} />
+                    New Chat
+                  </button>
+                </div>
                 <div ref={chatRef} className="flex-1 overflow-y-auto p-8 space-y-6">
                   {chatHistory.length === 0 && (
                     <div className="h-full flex flex-col items-center justify-center text-center opacity-40">
@@ -463,9 +503,23 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
                     </div>
                   )}
                   {chatHistory.map(m => (
-                    <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[85%] p-5 rounded-2xl leading-relaxed ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none shadow-lg shadow-indigo-500/10' : 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700'}`}>
+                    <div key={m.id} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
+                      <div className={`max-w-[85%] p-5 rounded-2xl leading-relaxed relative group ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none shadow-lg shadow-indigo-500/10' : 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700'}`}>
                         {m.text}
+                        
+                        {m.role === 'ai' && (
+                          <div className="mt-4 flex gap-2 pt-4 border-t border-slate-700/50">
+                            <button onClick={() => copyToClipboard(m.text)} title="Copy to clipboard" className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-all">
+                              <Copy size={14} />
+                            </button>
+                            <button onClick={() => downloadTextAsFile(m.text)} title="Download Text" className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-all">
+                              <Download size={14} />
+                            </button>
+                            <button onClick={() => setChatHistory(prev => prev.filter(item => item.id !== m.id))} title="Delete message" className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-rose-500 transition-all ml-auto">
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
