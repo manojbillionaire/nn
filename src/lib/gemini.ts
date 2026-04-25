@@ -19,7 +19,7 @@ export async function speakWithGemini(text: string, apiKey?: string) {
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash", 
+      model: "gemini-3.1-flash-tts-preview", 
       contents: [{ parts: [{ text }] }],
       config: {
         responseModalities: [Modality.AUDIO],
@@ -66,7 +66,7 @@ export async function consultGemini(message: string, history: any[] = [], apiKey
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-2.5-flash-preview",
       contents: [
         ...history.map(h => ({
           role: h.role === 'ai' ? 'model' : 'user',
