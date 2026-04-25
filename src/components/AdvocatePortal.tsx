@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import ReactMarkdown from 'react-markdown';
 import api, { setAuthToken } from '../api';
 import { UserButton, useAuth } from "@clerk/clerk-react";
 import { motion, AnimatePresence } from 'motion/react';
@@ -149,7 +150,7 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
 
   const S = {
     page: { display: 'flex', height: '100vh', background: '#020617', color: '#e2e8f0', overflow: 'hidden' },
-    sidebar: { width: 72, background: '#070b14', borderRight: '1px solid rgba(255,255,255,.05)', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '20px 0', gap: 8, flexShrink: 0, overflowY: 'auto' as const },
+    sidebar: { width: 72, background: '#070b14', borderRight: '1px solid rgba(255,255,255,.05)', display: 'flex', flexDirection: 'column' as const, alignItems: 'center' as const, padding: '20px 0', gap: 8, flexShrink: 0, overflowY: 'auto' as const },
     sideBtn: (active: boolean) => ({ width: 44, height: 44, borderRadius: 12, background: active ? 'rgba(245,158,11,.1)' : 'transparent', border: active ? '1px solid rgba(245,158,11,.25)' : '1px solid transparent', color: active ? '#f59e0b' : '#475569', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' as const, transition: 'all .2s' }),
     header: { height: 56, background: '#0a0f1d', borderBottom: '1px solid rgba(255,255,255,.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', flexShrink: 0 },
     card: { background: '#0a0f1d', borderRadius: 24, padding: 28, border: '1px solid rgba(255,255,255,.05)' },
@@ -448,7 +449,7 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
               <div style={S.card} className="lg:col-span-2">
                 <h3 className="text-xl font-bold mb-4 italic">Recent Call Records</h3>
                 <div className="space-y-3">
-                  {voiceRecords.map(r => (
+                  {voiceRecords.map((r: any) => (
                     <div key={r.id} className="p-5 bg-slate-900/50 border border-slate-800 rounded-2xl hover:border-slate-700 transition-all cursor-pointer">
                       <div className="flex justify-between mb-2">
                         <span className="font-bold text-slate-200">{r.caller || r.client}</span>
@@ -526,7 +527,9 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
                   {chatHistory.map(m => (
                     <div key={m.id} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
                       <div className={`max-w-[85%] p-5 rounded-2xl leading-relaxed relative group ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-tr-none shadow-lg shadow-indigo-500/10' : 'bg-slate-800 text-slate-200 rounded-tl-none border border-slate-700'}`}>
-                        {m.text}
+                        <div className={`prose prose-invert max-w-none text-sm ${m.role === 'user' ? 'text-white' : 'text-slate-200'}`}>
+                          <ReactMarkdown>{m.text}</ReactMarkdown>
+                        </div>
                         
                         {m.role === 'ai' && (
                           <div className="mt-4 flex gap-2 pt-4 border-t border-slate-700/50">
@@ -816,7 +819,7 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
               <div className="mt-8 w-full max-w-sm">
                 <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-600 mb-4 text-center">Recent Activity</h4>
                 <div className="space-y-2">
-                  {voiceRecords.slice(0, 3).map(r => (
+                  {voiceRecords.slice(0, 3).map((r: any) => (
                     <div key={r.id} className="p-4 bg-slate-900/50 border border-slate-800 rounded-2xl flex items-center justify-between">
                       <div>
                         <div className="text-sm font-bold">{r.caller || r.client}</div>

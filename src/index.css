@@ -26,3 +26,47 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-slate-700;
 }
+
+/* Markdown Styles */
+.prose {
+  @apply leading-relaxed;
+}
+
+.prose p {
+  @apply mb-4 last:mb-0;
+}
+
+.prose h1, .prose h2, .prose h3 {
+  @apply font-bold text-white mb-4 mt-6 first:mt-0;
+}
+
+.prose h1 { @apply text-2xl; }
+.prose h2 { @apply text-xl; }
+.prose h3 { @apply text-lg; }
+
+.prose ul, .prose ol {
+  @apply mb-4 pl-5 space-y-2;
+}
+
+.prose ul { @apply list-disc; }
+.prose ol { @apply list-decimal; }
+
+.prose li {
+  @apply pl-1;
+}
+
+.prose strong {
+  @apply font-bold text-indigo-400;
+}
+
+.prose code {
+  @apply bg-slate-900 px-1.5 py-0.5 rounded text-sm font-mono text-amber-500 border border-slate-800;
+}
+
+.prose pre {
+  @apply bg-slate-950 p-4 rounded-xl border border-slate-800 overflow-x-auto mb-4;
+}
+
+.prose blockquote {
+  @apply border-l-4 border-indigo-500 pl-4 italic text-slate-400 my-4;
+}

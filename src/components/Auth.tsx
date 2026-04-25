@@ -224,7 +224,7 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                             onClick={handlePaste}
                             className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-amber-500 transition-colors"
                           >
-                            <Clipboard size={18} title="Click to Paste" />
+                            <Clipboard size={18} />
                           </button>
                         </div>
 
