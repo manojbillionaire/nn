@@ -3,15 +3,7 @@ import { GoogleGenAI, Modality } from "@google/genai";
 let aiInstance: GoogleGenAI | null = null;
 
 export function getGemini(apiKey?: string) {
-  const key = apiKey || process.env.GEMINI_API_KEY;
-  if (!key) {
-    if (typeof window !== 'undefined') {
-      // In the browser, we might not have process.env.GEMINI_API_KEY if not injected
-      // But AI Studio usually injects it or uses it on the proxy.
-      // If the user provided their own key, use that.
-    }
-  }
-  
+  const key = apiKey || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined);
   if (!aiInstance && key) {
     aiInstance = new GoogleGenAI({ apiKey: key });
   }
@@ -20,23 +12,33 @@ export function getGemini(apiKey?: string) {
 
 export async function speakWithGemini(text: string, apiKey?: string) {
   const ai = getGemini(apiKey);
-  if (!ai) throw new Error("Gemini AI not initialized. Missing API Key.");
+  if (!ai) {
+    console.warn("Gemini AI not initialized. Using fallback SpeechSynthesis.");
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      window.speechSynthesis.speak(utterance);
+    }
+    return false;
+  }
 
   try {
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-tts-preview",
-      contents: [{ parts: [{ text }] }],
-      config: {
+    const model = ai.getGenerativeModel({ model: "gemini-2.0-flash" });
+    
+    const response = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text }] }],
+      generationConfig: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
           voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: 'Zephyr' }, // Clear and professional
-          },
-        },
-      },
+            prebuiltVoiceConfig: { voiceName: 'Puck' }, // Professional warm voice
+          }
+        }
+      }
     });
 
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    const audioPart = response.response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+    const base64Audio = audioPart?.inlineData?.data;
+    
     if (base64Audio) {
       const audioData = atob(base64Audio);
       const arrayBuffer = new ArrayBuffer(audioData.length);
@@ -45,7 +47,7 @@ export async function speakWithGemini(text: string, apiKey?: string) {
         view[i] = audioData.charCodeAt(i);
       }
       
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const buffer = await audioContext.decodeAudioData(arrayBuffer);
       const source = audioContext.createBufferSource();
       source.buffer = buffer;
@@ -56,6 +58,11 @@ export async function speakWithGemini(text: string, apiKey?: string) {
     return false;
   } catch (error) {
     console.error("Gemini TTS Error:", error);
-    throw error;
+    // Fallback to basic TTS
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      window.speechSynthesis.speak(utterance);
+    }
+    return false;
   }
 }

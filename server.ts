@@ -8,6 +8,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
 import { clerkMiddleware, getAuth, createClerkClient } from '@clerk/express';
+import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
 
@@ -160,6 +161,13 @@ async function startServer() {
     }
   });
 
+// Initialize Gemini SDK lazily
+const getAI = (key?: string) => {
+  const apiKey = key || process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("API Key missing");
+  return new GoogleGenAI({ apiKey });
+};
+
   // AI Orchestrator Endpoint
   app.post('/api/ai/consult', async (req, res) => {
     const { userId } = getAuth(req);
@@ -174,12 +182,19 @@ async function startServer() {
       const apiKey = user?.gemini_api_key || process.env.GEMINI_API_KEY;
       if (!apiKey) return res.status(400).json({ error: 'Gemini API key missing. Please provide one in settings.' });
 
-      // Using Gemini 2.0 Flash
-      const response = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-        contents: [...history.map((h: any) => ({ role: h.role === 'ai' ? 'model' : 'user', parts: [{ text: h.text }] })), { role: 'user', parts: [{ text: message }] }]
+      const genAI = getAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+
+      const chat = model.startChat({
+        history: history.map((h: any) => ({
+          role: h.role === 'ai' ? 'model' : 'user',
+          parts: [{ text: h.text }]
+        })),
       });
+
+      const result = await chat.sendMessage(message);
+      const reply = result.response.text();
       
-      const reply = response.data.candidates[0].content.parts[0].text;
       res.json({ reply });
     } catch (err) {
       console.error('Gemini error:', err);

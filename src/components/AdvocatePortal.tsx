@@ -181,14 +181,15 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
     if (user.gemini_api_key && !welcomeSpoken && view === 'command') {
       const triggerWelcome = async () => {
         try {
-          await speakWithGemini(`Welcome to Nexus Justice, Advocate ${user.name || 'Manoj'}. How can I help you today?`, user.gemini_api_key);
+          const userName = user.name || 'Advocate';
+          await speakWithGemini(`Welcome to Nexus Justice, Advocate ${userName}. How can I help you?`, user.gemini_api_key);
           setWelcomeSpoken(true);
         } catch (err) {
           console.error("Failed to speak welcome:", err);
         }
       };
       // Delay slightly for UI to settle
-      const timer = setTimeout(triggerWelcome, 1500);
+      const timer = setTimeout(triggerWelcome, 2000);
       return () => clearTimeout(timer);
     }
   }, [user.gemini_api_key, welcomeSpoken, view, user.name]);
