@@ -1,6 +1,18 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import api from '../api';
 import { UserButton } from "@clerk/clerk-react";
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  Key, 
+  ExternalLink, 
+  Clipboard, 
+  CheckCircle2, 
+  ChevronRight, 
+  Sparkles, 
+  Volume2, 
+  AlertTriangle,
+  X
+} from 'lucide-react';
 
 const Icon = ({ path, size = 20, strokeWidth = 2 }: { path: string | string[], size?: number, strokeWidth?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
@@ -64,6 +76,7 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
   const [consoleInput, setConsoleInput] = useState("");
   const [consoleLoading, setConsoleLoading] = useState(false);
   const [supportLoading, setSupportLoading] = useState(false);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
 
   const [kbDocs, setKbDocs] = useState([
     { id: 1, category: 'railway', name: 'Railways Act, 1989.pdf', size: '2.4 MB', date: '2026-01-12', pages: 184 },
@@ -157,6 +170,10 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
 
   const sendConsult = async () => {
     if (!consoleInput.trim() || consoleLoading) return;
+    if (!user.gemini_api_key) {
+      setShowApiKeyModal(true);
+      return;
+    }
     const text = consoleInput.trim(); setConsoleInput('');
     setChatHistory(h => [...h, { role: 'user', text, id: Date.now() }]);
     setConsoleLoading(true);
@@ -205,11 +222,41 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
         <main style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
           {view === 'command' && (
             <div className="p-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {!user.gemini_api_key && (
+                <motion.div 
+                  initial={{ opacity: 0, y: -20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="col-span-full bg-amber-500/10 border border-amber-500/20 rounded-2xl p-4 flex items-center justify-between gap-4"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-amber-500/20 rounded-xl flex items-center justify-center text-amber-500">
+                      <AlertTriangle size={20} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-white">AI Engine Offline</p>
+                      <p className="text-xs text-slate-400">Your Gemini 2.0 Flash key is missing or inactive. Click 'Get API Key' below to activate your legal engine.</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setShowApiKeyModal(true)}
+                    className="px-4 py-2 bg-amber-500 text-slate-950 font-bold rounded-lg text-xs uppercase tracking-widest hover:bg-amber-400 transition-all shadow-lg shadow-amber-500/20"
+                  >
+                    Activate Now
+                  </button>
+                </motion.div>
+              )}
               <div style={S.card} className="col-span-full lg:col-span-1">
                 <h3 className="text-xl font-bold mb-4 italic">Command Center</h3>
                 <div className="space-y-4">
                   <button onClick={() => setView('consult')} className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold transition-all shadow-lg shadow-indigo-500/20">Open AI Consultant</button>
                   <button onClick={() => setView('writing-desk')} className="w-full py-4 bg-slate-800 hover:bg-slate-700 rounded-2xl font-bold border border-slate-700 transition-all">Open Writing Desk</button>
+                  <button 
+                    onClick={() => setShowApiKeyModal(true)} 
+                    disabled={!!user.gemini_api_key}
+                    className={`w-full py-4 rounded-2xl font-bold transition-all border ${user.gemini_api_key ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' : 'bg-amber-500 text-slate-950 border-amber-500 shadow-lg shadow-amber-500/20 hover:bg-amber-400'}`}
+                  >
+                    {user.gemini_api_key ? 'API Key Active' : 'Get API Key'}
+                  </button>
                   <button onClick={async () => {
                     await api.post('/api/calls/webhook', {
                       caller: 'Raju (Client)',
@@ -622,7 +669,192 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
             </button>
           </div>
         </div>
+        {/* Gemini API Key Modal */}
+        <AnimatePresence>
+          {showApiKeyModal && (
+            <GeminiKeyModal 
+              onClose={() => setShowApiKeyModal(false)} 
+              onSuccess={() => {
+                setShowApiKeyModal(false);
+                window.location.reload(); // Refresh to catch new user state from backend
+              }}
+            />
+          )}
+        </AnimatePresence>
       </div>
+    </div>
+  );
+}
+
+function GeminiKeyModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: () => void }) {
+  const [apiKey, setApiKey] = useState('');
+  const [currentStep, setCurrentStep] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const isValidKey = apiKey.startsWith('AIza') && apiKey.length > 20;
+
+  const voiceMessages = {
+    1: "Navigate to Google AI Studio to generate your unique Gemini key.",
+    2: "Copy the key securely to your device's clipboard now.",
+    3: "Paste the key below to unlock your legal engine."
+  };
+
+  const speak = (text: string) => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+      utterance.rate = 1;
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  useEffect(() => {
+    if (!isSuccess) {
+      speak(voiceMessages[currentStep as keyof typeof voiceMessages]);
+    }
+  }, [currentStep, isSuccess]);
+
+  const handlePaste = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      setApiKey(text);
+    } catch (e) {
+      alert('Clipboard access denied.');
+    }
+  };
+
+  const handleSave = async () => {
+    if (!isValidKey) return;
+    setLoading(true);
+    try {
+      await api.post('/api/user/apikey', { apiKey });
+      setIsSuccess(true);
+      speak("Access granted. Your engine is now live.");
+      setTimeout(() => onSuccess(), 2000);
+    } catch (err) {
+      alert('Activation failed.');
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.9 }}
+        className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-[40px] p-8 md:p-12 shadow-2xl relative overflow-hidden"
+      >
+        <button onClick={onClose} className="absolute right-6 top-6 text-slate-500 hover:text-white transition-colors">
+          <X size={24} />
+        </button>
+
+        <AnimatePresence>
+          {isSuccess && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="absolute inset-0 bg-emerald-500/10 backdrop-blur-3xl z-0"
+            />
+          )}
+        </AnimatePresence>
+
+        <div className="relative z-10">
+          {!isSuccess ? (
+            <>
+              <div className="flex flex-col items-center mb-8">
+                <div className="w-16 h-16 bg-amber-500/10 rounded-[20px] flex items-center justify-center border border-amber-500/20 mb-6 relative">
+                  <Key className="text-amber-500 w-8 h-8" />
+                  <motion.div 
+                    animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.6, 0.3] }}
+                    transition={{ repeat: Infinity, duration: 2 }}
+                    className="absolute inset-0 bg-amber-500 rounded-[20px] blur-xl -z-10"
+                  />
+                </div>
+                <h2 className="text-2xl font-black text-white text-center tracking-tight mb-2 uppercase italic">Activate AI</h2>
+                <div className="flex items-center gap-2 px-3 py-1 bg-slate-800/80 rounded-full border border-slate-700/50">
+                  <Volume2 className="w-3 h-3 text-amber-500 animate-pulse" />
+                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">Voice Aid: Step {currentStep}</span>
+                </div>
+              </div>
+
+              <div className="flex justify-between mb-8 px-2">
+                {[1, 2, 3].map((s) => (
+                  <div key={s} className="flex flex-col items-center gap-2">
+                    <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center transition-all ${currentStep === s ? 'border-amber-500 bg-amber-500 text-black font-black scale-110 shadow-lg shadow-amber-500/20' : currentStep > s ? 'border-emerald-500 bg-emerald-500 text-black' : 'border-slate-800 text-slate-600'}`}>
+                      {currentStep > s ? <CheckCircle2 className="w-4 h-4" /> : <span className="text-[10px]">{s}</span>}
+                    </div>
+                    <div className={`text-[9px] font-black uppercase tracking-tighter ${currentStep === s ? 'text-amber-500' : 'text-slate-600'}`}>
+                      {s === 1 ? 'ലഭിക്കുക' : s === 2 ? 'പകർത്തുക' : 'ചേർക്കുക'}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <AnimatePresence mode="wait">
+                {currentStep === 1 && (
+                  <motion.div key="s1" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+                    <div className="bg-slate-950/50 border border-slate-800 rounded-3xl p-6">
+                      <p className="text-slate-400 text-xs leading-relaxed mb-4 font-medium italic">Generate your key at Google AI Studio.</p>
+                      <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" onClick={() => setCurrentStep(2)}
+                        className="flex items-center justify-between w-full bg-amber-500 hover:bg-amber-400 text-slate-950 p-4 rounded-xl transition-all shadow-xl shadow-amber-500/10 group font-bold text-sm"
+                      >
+                        <span>Obtain Key</span>
+                        <ExternalLink size={16} />
+                      </a>
+                    </div>
+                  </motion.div>
+                )}
+
+                {currentStep === 2 && (
+                  <motion.div key="s2" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+                    <div className="bg-slate-950/50 border border-slate-800 rounded-3xl p-6">
+                      <p className="text-slate-400 text-xs leading-relaxed mb-4 font-medium italic">Copy the key (AIza...) to your clipboard.</p>
+                      <button onClick={() => setCurrentStep(3)} className="w-full bg-slate-800 hover:bg-slate-700 text-white p-4 rounded-xl border border-slate-700 transition-all font-bold text-sm">
+                        Key Copied <ChevronRight size={16} className="inline ml-2" />
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+
+                {currentStep === 3 && (
+                  <motion.div key="s3" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+                    <div className="bg-slate-950/50 border border-slate-800 rounded-3xl p-6">
+                      <label className="block text-[9px] font-black text-slate-500 uppercase tracking-widest mb-3 italic">ചേർക്കുക (Paste Key)</label>
+                      <div className="relative mb-5">
+                        <input
+                          ref={inputRef}
+                          type="password"
+                          value={apiKey}
+                          onChange={(e) => setApiKey(e.target.value)}
+                          className={`w-full bg-slate-950 border ${isValidKey ? 'border-emerald-500' : 'border-slate-800'} rounded-xl py-4 pl-5 pr-12 text-white outline-none font-mono text-xs tracking-widest`}
+                          placeholder="AIzaSy..."
+                        />
+                        <button onClick={handlePaste} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-amber-500"><Clipboard size={18} /></button>
+                      </div>
+                      <button onClick={handleSave} disabled={loading || !isValidKey} className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-4 rounded-xl transition-all disabled:opacity-20 uppercase tracking-widest text-[10px] flex items-center justify-center gap-2">
+                        {loading ? 'Activating...' : <>Unlock AI <Sparkles size={14} /></>}
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </>
+          ) : (
+            <div className="flex flex-col items-center py-8 text-center">
+              <div className="w-20 h-20 bg-emerald-500 rounded-full flex items-center justify-center mb-6 relative">
+                <CheckCircle2 className="text-slate-950 w-10 h-10" />
+                <motion.div initial={{ scale: 0 }} animate={{ scale: 1.5, opacity: 0 }} transition={{ duration: 1, repeat: Infinity }} className="absolute inset-0 bg-emerald-500 rounded-full" />
+              </div>
+              <h2 className="text-2xl font-black text-white mb-2 italic tracking-tight">AI ACTIVE</h2>
+              <p className="text-slate-400 text-xs font-medium uppercase tracking-widest leading-relaxed">Identity Verified. Nexus Gateway Open.</p>
+            </div>
+          )}
+        </div>
+      </motion.div>
     </div>
   );
 }
