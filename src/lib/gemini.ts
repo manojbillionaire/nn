@@ -66,7 +66,7 @@ export async function consultGemini(message: string, history: any[] = [], apiKey
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview",
+      model: "gemini-2.5-flash",
       contents: [
         ...history.map(h => ({
           role: h.role === 'ai' ? 'model' : 'user',
