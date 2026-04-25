@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import api, { setAuthToken } from '../api';
 import { UserButton, useAuth } from "@clerk/clerk-react";
 import { motion, AnimatePresence } from 'motion/react';
-import { speakWithGemini, consultGemini } from "../lib/gemini";
+import { speakWithGemini, consultGemini, stopSpeaking } from "../lib/gemini";
 import { 
   Key, 
   ExternalLink, 
@@ -11,6 +11,7 @@ import {
   ChevronRight, 
   Sparkles, 
   Volume2, 
+  VolumeX,
   AlertTriangle,
   X,
   Camera,
@@ -89,6 +90,7 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [welcomeSpoken, setWelcomeSpoken] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -191,7 +193,9 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
       const triggerWelcome = async () => {
         try {
           const userName = user.name || 'Advocate';
+          setIsSpeaking(true);
           await speakWithGemini(`Welcome to Nexus Justice, Advocate ${userName}. How can I help you?`, user.gemini_api_key);
+          setIsSpeaking(false);
           setWelcomeSpoken(true);
         } catch (err) {
           console.error("Failed to speak welcome:", err);
@@ -307,9 +311,8 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
         setChatHistory(h => [...h, { role: 'ai', text: reply, id: Date.now() }]);
         if (voiceAiOn) {
           setVoiceAiReply(reply.slice(0, 100) + '...');
-          // Sanitize text for TTS: remove asterisks and excessive formatting
-          const cleanText = reply.replace(/\*/g, '').replace(/#/g, '').replace(/_{1,2}/g, '').trim();
-          await speakWithGemini(cleanText, user.gemini_api_key);
+          setIsSpeaking(true);
+          speakWithGemini(reply, user.gemini_api_key).finally(() => setIsSpeaking(false));
         }
       } else {
         throw new Error("No reply from AI");
@@ -321,9 +324,16 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
     setConsoleLoading(false);
   };
 
+  const stopAiAudio = () => {
+    stopSpeaking();
+    setIsSpeaking(false);
+  };
+
   const resetChat = () => {
+    stopAiAudio();
     setChatHistory([]);
     setVoiceAiReply('');
+    setVoiceAiOn(false);
   };
 
   const copyToClipboard = (text: string) => {
@@ -484,13 +494,24 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
                     </div>
                     <span className="text-sm font-bold uppercase tracking-widest text-slate-300">Nexus Consultant AI</span>
                   </div>
-                  <button 
-                    onClick={resetChat}
-                    className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl text-xs font-bold transition-all border border-slate-700"
-                  >
-                    <RefreshCw size={14} />
-                    New Chat
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={resetChat}
+                      className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white rounded-xl text-xs font-bold transition-all border border-slate-700"
+                    >
+                      <RefreshCw size={14} />
+                      New Chat
+                    </button>
+                    {isSpeaking && (
+                      <button 
+                        onClick={stopAiAudio}
+                        className="flex items-center gap-2 px-4 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-xl text-xs font-bold transition-all border border-rose-500/20 shadow-lg shadow-rose-500/5 animate-pulse"
+                      >
+                        <VolumeX size={14} />
+                        Stop Reading
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div ref={chatRef} className="flex-1 overflow-y-auto p-8 space-y-6">
                   {chatHistory.length === 0 && (

@@ -6,7 +6,27 @@ export function getGemini(apiKey?: string) {
   return new GoogleGenAI({ apiKey: key });
 }
 
+let currentAudioSource: AudioBufferSourceNode | null = null;
+let currentAudioContext: AudioContext | null = null;
+
+export function stopSpeaking() {
+  if (currentAudioSource) {
+    try {
+      currentAudioSource.stop();
+    } catch (e) {
+      // Ignore if already stopped
+    }
+    currentAudioSource = null;
+  }
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
+  }
+}
+
 export async function speakWithGemini(text: string, apiKey?: string) {
+  // Stop any existing playback
+  stopSpeaking();
+
   const ai = getGemini(apiKey);
   if (!ai) {
     console.warn("Gemini AI not initialized. Using fallback SpeechSynthesis.");
@@ -18,9 +38,12 @@ export async function speakWithGemini(text: string, apiKey?: string) {
   }
 
   try {
+    // Sanitize text for TTS: remove asterisks and excessive formatting to avoid "asterisk" reading
+    const cleanText = text.replace(/\*/g, '').replace(/#/g, '').replace(/_{1,2}/g, '').trim();
+
     const response = await ai.models.generateContent({
       model: "gemini-3.1-flash-tts-preview", 
-      contents: [{ parts: [{ text }] }],
+      contents: [{ parts: [{ text: cleanText }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
@@ -42,12 +65,22 @@ export async function speakWithGemini(text: string, apiKey?: string) {
       }
       
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      currentAudioContext = audioContext;
       const buffer = await audioContext.decodeAudioData(arrayBuffer);
       const source = audioContext.createBufferSource();
       source.buffer = buffer;
       source.connect(audioContext.destination);
       source.start(0);
-      return true;
+      currentAudioSource = source;
+
+      return new Promise((resolve) => {
+        source.onended = () => {
+          if (currentAudioSource === source) {
+            currentAudioSource = null;
+          }
+          resolve(true);
+        };
+      });
     }
     return false;
   } catch (error) {
