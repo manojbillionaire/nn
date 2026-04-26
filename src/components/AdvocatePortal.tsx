@@ -103,6 +103,7 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
   const analyserRef = useRef<AnalyserNode | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const camStreamRef = useRef<MediaStream | null>(null);
+  const recognitionRef = useRef<any>(null);
 
   const [kbDocs, setKbDocs] = useState([
     { id: 1, category: 'railway', name: 'Railways Act, 1989.pdf', size: '2.4 MB', date: '2026-01-12', pages: 184 },
@@ -251,6 +252,7 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
   useEffect(() => {
     let stream: MediaStream | null = null;
     async function startMic() {
+      let recognition: any = null;
       if (voiceAiOn) {
         try {
           stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -276,12 +278,56 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
           };
           updateLevel();
 
+          // Speech Recognition Setup
+          const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+          if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.continuous = false; 
+            recognition.interimResults = true;
+            recognition.lang = 'en-IN';
+
+            recognition.onresult = (event: any) => {
+              let interimTranscript = '';
+              for (let i = event.resultIndex; i < event.results.length; ++i) {
+                const transcript = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                  setVoiceAiReply(transcript);
+                  sendConsult(transcript);
+                } else {
+                  interimTranscript += transcript;
+                  setVoiceAiReply(interimTranscript);
+                }
+              }
+            };
+
+            recognition.onerror = (event: any) => {
+              console.error('Speech recognition error', event.error);
+              if (event.error !== 'no-speech') {
+                // handle error
+              }
+            };
+
+            recognition.onend = () => {
+              if (voiceAiOn && !isSpeaking) {
+                try { recognition.start(); } catch(e) {}
+              }
+            };
+
+            recognition.start();
+            recognitionRef.current = recognition;
+          }
+
           setVoiceAiListening(true);
         } catch (err) {
           console.error("Mic access denied:", err);
           setVoiceAiOn(false);
         }
       } else {
+        if (recognitionRef.current) {
+          recognitionRef.current.onend = null;
+          recognitionRef.current.stop();
+          recognitionRef.current = null;
+        }
         if (micStreamRef.current) {
           micStreamRef.current.getTracks().forEach(t => t.stop());
           micStreamRef.current = null;
@@ -299,17 +345,22 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
       if (stream) {
         stream.getTracks().forEach(t => t.stop());
       }
+      if (recognitionRef.current) {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.stop();
+      }
     };
   }, [voiceAiOn]);
 
-  const sendConsult = async () => {
-    if (!consoleInput.trim() || consoleLoading) return;
+  const sendConsult = async (inputText?: string) => {
+    const textToProcess = (inputText || consoleInput).trim();
+    if (!textToProcess || consoleLoading) return;
     if (!user.gemini_api_key) {
       setShowApiKeyModal(true);
       return;
     }
-    const text = consoleInput.trim(); 
-    setConsoleInput('');
+    const text = textToProcess; 
+    if (!inputText) setConsoleInput('');
     setChatHistory(h => [...h, { role: 'user', text, id: Date.now() }]);
     setConsoleLoading(true);
     try {
@@ -344,6 +395,22 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
     stopSpeaking();
     setIsSpeaking(false);
   };
+
+  useEffect(() => {
+    if (voiceAiOn && !isSpeaking && recognitionRef.current) {
+      try {
+        recognitionRef.current.start();
+      } catch (e) {
+        // Recognition might already be running
+      }
+    } else if (isSpeaking && recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {
+        // Recognition might already be stopped
+      }
+    }
+  }, [isSpeaking, voiceAiOn]);
 
   const resetChat = () => {
     stopAiAudio();
@@ -692,7 +759,7 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
                     className="flex-1 bg-slate-800 border border-slate-700 rounded-2xl px-6 py-4 outline-none focus:border-indigo-500 transition-all text-sm"
                     placeholder="Describe the legal issue or ask for a draft..."
                   />
-                  <button onClick={sendConsult} className="px-8 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold transition-all shadow-lg shadow-indigo-500/20">Send</button>
+                  <button onClick={() => sendConsult()} className="px-8 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold transition-all shadow-lg shadow-indigo-500/20">Send</button>
                 </div>
               </div>
             </div>
