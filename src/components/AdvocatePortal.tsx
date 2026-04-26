@@ -302,9 +302,6 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
 
             recognition.onerror = (event: any) => {
               console.error('Speech recognition error', event.error);
-              if (event.error !== 'no-speech') {
-                // handle error
-              }
             };
 
             recognition.onend = () => {
@@ -315,6 +312,9 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
 
             recognition.start();
             recognitionRef.current = recognition;
+          } else {
+            console.warn("Speech recognition not supported in this browser.");
+            setVoiceAiReply("Voice input (STT) not supported in this browser. Please use Chrome.");
           }
 
           setVoiceAiListening(true);
@@ -355,13 +355,14 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
   const sendConsult = async (inputText?: string) => {
     const textToProcess = (inputText || consoleInput).trim();
     if (!textToProcess || consoleLoading) return;
-    if (!user.gemini_api_key) {
+    if (activeBrain === 'gemini' && !user.gemini_api_key) {
       setShowApiKeyModal(true);
       return;
     }
     const text = textToProcess; 
     if (!inputText) setConsoleInput('');
     setChatHistory(h => [...h, { role: 'user', text, id: Date.now() }]);
+    if (voiceAiOn) setVoiceAiReply("Thinking...");
     setConsoleLoading(true);
     try {
       let reply: string;
@@ -370,16 +371,29 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
       } else {
         // Simulated local Gemma response
         await new Promise(r => setTimeout(r, 1500)); // Simulate processing
-        const brainName = activeBrain === 'gemma2b' ? 'Gemma 2B' : 'Gemma 4B';
+        const brainName = activeBrain === 'gemma2b' ? 'Gemma3n E2B' : 'Gemma3n E4B';
         reply = `(Fallback: ${brainName} Processing)\n\nI have analyzed your request regarding "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}". As a local legal assistant, I recommend focusing on the specific statutes relevant to this district. How would you like to proceed with the draft?`;
       }
 
       if (reply) {
         setChatHistory(h => [...h, { role: 'ai', text: reply, id: Date.now() }]);
         if (voiceAiOn) {
-          setVoiceAiReply(reply.slice(0, 100) + '...');
+          setVoiceAiReply("Generating audio...");
           setIsSpeaking(true);
-          speakWithGemini(reply, user.gemini_api_key).finally(() => setIsSpeaking(false));
+          // Pass undefined if no key, so it uses environment key or fallback
+          speakWithGemini(reply, user.gemini_api_key || undefined)
+            .then(success => {
+              if (success) {
+                setVoiceAiReply(reply.slice(0, 100) + '...');
+              } else {
+                setVoiceAiReply("Voice guidance unavailable for this response.");
+              }
+            })
+            .catch(err => {
+              console.error("Voice error:", err);
+              setVoiceAiReply("Voice engine error. Please check internet connection.");
+            })
+            .finally(() => setIsSpeaking(false));
         }
       } else {
         throw new Error("No reply from AI");
@@ -475,11 +489,19 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
             <span className="text-slate-700">|</span>
             <span className="text-white font-medium text-sm">{user.name || 'Advocate'}</span>
             <span className="text-slate-700">|</span>
-            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800">
-              <div className={`w-1.5 h-1.5 rounded-full ${activeBrain !== 'gemini' ? 'bg-amber-400' : user.gemini_api_key ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-rose-500'}`} />
-              <span className={`text-[9px] font-black uppercase tracking-widest ${activeBrain === 'gemma2b' ? 'text-amber-400' : activeBrain === 'gemma4b' ? 'text-amber-400' : user.gemini_api_key ? 'text-emerald-500' : 'text-rose-500'}`}>
-                {activeBrain === 'gemma2b' ? 'GEMMA3N E2B ACTIVE' : activeBrain === 'gemma4b' ? 'GEMMA3N E4B ACTIVE' : user.gemini_api_key ? 'GEMINI 2.5 FLASH ACTIVE' : 'AI OFFLINE'}
-              </span>
+            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/50 border border-slate-800">
+              <div className="flex items-center gap-1.5 border-r border-slate-800 pr-2 mr-2">
+                <div className={`w-1.5 h-1.5 rounded-full ${user.gemini_api_key ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-700'}`} />
+                <span className={`text-[9px] font-black uppercase tracking-widest ${user.gemini_api_key ? 'text-emerald-500' : 'text-slate-600'}`}>
+                  Gemini {activeBrain === 'gemini' ? 'Active' : 'Standby'}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className={`w-1.5 h-1.5 rounded-full ${activeBrain !== 'gemini' ? 'bg-amber-400' : 'bg-slate-700'}`} />
+                <span className={`text-[9px] font-black uppercase tracking-widest ${activeBrain !== 'gemini' ? 'text-amber-400' : 'text-slate-600'}`}>
+                  {activeBrain === 'gemma2b' ? 'GEMMA3N E2B ACTIVE' : activeBrain === 'gemma4b' ? 'GEMMA3N E4B ACTIVE' : 'Local Brain Ready'}
+                </span>
+              </div>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -555,9 +577,10 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
                       <div className="flex bg-slate-900 p-1 rounded-lg gap-1 border border-slate-800">
                         <button 
                           onClick={() => setActiveBrain('gemini')}
-                          className={`px-3 py-1 rounded-md text-[8px] font-bold transition-all ${activeBrain === 'gemini' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                          disabled={!user.gemini_api_key}
+                          className={`px-3 py-1 rounded-md text-[8px] font-bold transition-all ${!user.gemini_api_key ? 'opacity-30 cursor-not-allowed grayscale' : activeBrain === 'gemini' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-500 hover:text-slate-300'}`}
                         >
-                          GEMINI
+                          GEMINI {user.gemini_api_key ? '' : '(LOCKED)'}
                         </button>
                         {brain1Ready && (
                           <button 
@@ -1076,20 +1099,27 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
             <div className="pointer-events-auto bg-slate-900/95 backdrop-blur-2xl border border-slate-700 rounded-3xl p-6 w-96 shadow-[0_20px_50px_rgba(0,0,0,0.5)] border-b-indigo-500/50">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-3">
-                  <div className={`w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] ${micLevel > 10 ? 'animate-pulse scale-125' : ''}`} />
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-500">Nexus Voice Active</span>
+                  <div className={`w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] ${micLevel > 10 || isSpeaking ? 'animate-pulse scale-125' : ''} ${isSpeaking ? 'bg-amber-400 shadow-amber-500/50' : 'bg-emerald-500'}`} />
+                  <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${isSpeaking ? 'text-amber-400' : 'text-emerald-500'}`}>
+                    {isSpeaking ? 'Nexus Speaking' : 'Nexus Listening'}
+                  </span>
                 </div>
                 <div className="flex gap-1.5 items-end h-4">
                   {[...Array(6)].map((_, i) => (
                     <motion.div 
                       key={i} 
-                      animate={{ height: micLevel > 5 ? 4 + (Math.random() * (micLevel / 4)) : 4 }}
-                      className="w-1 bg-indigo-500/50 rounded-full" 
+                      animate={{ height: (micLevel > 5 || isSpeaking) ? 4 + (Math.random() * (micLevel > 5 ? micLevel / 4 : 8)) : 4 }}
+                      className={`w-1 rounded-full ${isSpeaking ? 'bg-amber-500/50' : 'bg-indigo-500/50'}`} 
                     />
                   ))}
                 </div>
               </div>
-              <p className="text-sm text-slate-200 leading-relaxed italic font-medium">"{voiceAiReply || (micLevel > 10 ? 'Transcribing legal query...' : 'Listening for your command...')}"</p>
+              <div className="space-y-1">
+                <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">{isSpeaking ? 'AI Guidance' : 'Last Command'}</p>
+                <p className="text-sm text-slate-200 leading-relaxed italic font-medium">
+                  {voiceAiReply || (micLevel > 10 ? 'Transcribing legal query...' : 'Listening for your command...')}
+                </p>
+              </div>
             </div>
           )}
           <div className="pointer-events-auto bg-slate-900/90 backdrop-blur-2xl border border-slate-800 rounded-full p-3 flex items-center gap-3 shadow-2xl border-t-white/5">

@@ -33,6 +33,7 @@ export async function speakWithGemini(text: string, apiKey?: string) {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(text);
       window.speechSynthesis.speak(utterance);
+      return true;
     }
     return false;
   }
@@ -48,7 +49,7 @@ export async function speakWithGemini(text: string, apiKey?: string) {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
           voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: 'Zephyr' }, 
+            prebuiltVoiceConfig: { voiceName: 'Kore' }, 
           },
         },
       },
@@ -65,6 +66,9 @@ export async function speakWithGemini(text: string, apiKey?: string) {
       }
       
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
       currentAudioContext = audioContext;
       const buffer = await audioContext.decodeAudioData(arrayBuffer);
       const source = audioContext.createBufferSource();
@@ -72,6 +76,7 @@ export async function speakWithGemini(text: string, apiKey?: string) {
       source.connect(audioContext.destination);
       source.start(0);
       currentAudioSource = source;
+      console.log("Playing Gemini TTS audio...");
 
       return new Promise((resolve) => {
         source.onended = () => {
@@ -88,6 +93,7 @@ export async function speakWithGemini(text: string, apiKey?: string) {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const utterance = new SpeechSynthesisUtterance(text);
       window.speechSynthesis.speak(utterance);
+      return true;
     }
     return false;
   }
@@ -99,7 +105,7 @@ export async function consultGemini(message: string, history: any[] = [], apiKey
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3-flash-preview",
       contents: [
         ...history.map(h => ({
           role: h.role === 'ai' ? 'model' : 'user',
