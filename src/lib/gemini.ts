@@ -23,88 +23,76 @@ export function stopSpeaking() {
   }
 }
 
-export async function speakWithGemini(text: string, apiKey?: string) {
+export async function speakWithGemini(text: string, apiKey?: string): Promise<boolean> {
   // Stop any existing playback
   stopSpeaking();
 
-  const ai = getGemini(apiKey);
-  if (!ai) {
-    console.warn("Gemini AI not initialized. Using fallback SpeechSynthesis.");
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(text);
-      window.speechSynthesis.speak(utterance);
-      return true;
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      console.warn("SpeechSynthesis not supported.");
+      resolve(false);
+      return;
     }
-    return false;
-  }
 
-  try {
-    // Sanitize text for TTS: remove asterisks and excessive formatting to avoid "asterisk" reading
+    // Sanitize text for TTS: remove asterisks and excessive formatting
     const cleanText = text.replace(/\*/g, '').replace(/#/g, '').replace(/_{1,2}/g, '').trim();
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash", 
-      contents: [{ parts: [{ text: cleanText }] }],
-      config: {
-        responseModalities: ["AUDIO"] as any,
-      },
-    });
-
-    const candidate = response.candidates?.[0];
-    const audioPart = candidate?.content?.parts?.find((p: any) => p.inlineData);
-    const base64Audio = audioPart?.inlineData?.data;
     
-    console.log("Gemini 2.5 candidate found:", !!candidate);
-    if (base64Audio) {
-      console.log("Audio data received, decoding...");
-      const audioData = atob(base64Audio);
-      const arrayBuffer = new ArrayBuffer(audioData.length);
-      const view = new Uint8Array(arrayBuffer);
-      for (let i = 0; i < audioData.length; i++) {
-        view[i] = audioData.charCodeAt(i);
-      }
+    const startSpeaking = () => {
+      const utterance = new SpeechSynthesisUtterance(cleanText);
       
-      const AudioContextClass = (window as any).AudioContext || (window as any).webkitAudioContext;
-      const audioContext = new AudioContextClass();
+      // Try to find a high-quality voice
+      const voices = window.speechSynthesis.getVoices();
+      console.log(`Available voices: ${voices.length}`);
       
-      // Attempt to resume immediately
-      await audioContext.resume();
-      
-      currentAudioContext = audioContext;
-      const buffer = await audioContext.decodeAudioData(arrayBuffer);
-      const source = audioContext.createBufferSource();
-      source.buffer = buffer;
-      source.connect(audioContext.destination);
-      source.start(0);
-      currentAudioSource = source;
-      console.log("Playback started.");
+      const preferredVoice = voices.find(v => 
+        (v.name.includes('Google') || v.name.includes('Neural')) && 
+        (v.lang.startsWith('en-IN') || v.lang.startsWith('en-GB') || v.lang.startsWith('en-US'))
+      ) || voices.find(v => v.lang.startsWith('en')) || voices[0];
 
-      return new Promise((resolve) => {
-        source.onended = () => {
-          if (currentAudioSource === source) {
-            currentAudioSource = null;
-          }
-          resolve(true);
-        };
-        setTimeout(() => resolve(true), 30000);
-      });
+      if (preferredVoice) {
+        console.log(`Using voice: ${preferredVoice.name}`);
+        utterance.voice = preferredVoice;
+      }
+
+      utterance.volume = 1.0;
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+
+      utterance.onstart = () => console.log("Speech started");
+      utterance.onend = () => {
+        console.log("Speech ended");
+        resolve(true);
+      };
+      utterance.onerror = (e) => {
+        console.error("SpeechSynthesis Error:", e);
+        resolve(false);
+      };
+
+      window.speechSynthesis.speak(utterance);
+    };
+
+    // If voices are not loaded yet, wait for them
+    if (window.speechSynthesis.getVoices().length === 0) {
+      window.speechSynthesis.onvoiceschanged = () => {
+        window.speechSynthesis.onvoiceschanged = null;
+        startSpeaking();
+      };
+    } else {
+      startSpeaking();
     }
-    console.warn("No audio data in response candidate.");
-    throw new Error("Missing audio data in response");
-  } catch (error) {
-    console.error("Gemini TTS Execution Error:", error);
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      console.log("Falling back to local SpeechSynthesis.");
-      return new Promise((resolve) => {
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.onend = () => resolve(true);
-        utterance.onerror = () => resolve(false);
-        window.speechSynthesis.speak(utterance);
-        setTimeout(() => resolve(true), 15000);
-      });
-    }
-    return false;
-  }
+
+    // Safety timeout: resolve if it gets stuck
+    setTimeout(() => {
+      if (window.speechSynthesis.speaking) {
+        console.log("Speech is taking longer than expected, resolving anyway.");
+        resolve(true);
+      } else if (!window.speechSynthesis.pending) {
+        // If not even pending, something went wrong
+        console.warn("Speech stuck in state. Moving on.");
+        resolve(false);
+      }
+    }, 20000);
+  });
 }
 
 export async function consultGemini(message: string, history: any[] = [], apiKey?: string) {
@@ -113,7 +101,7 @@ export async function consultGemini(message: string, history: any[] = [], apiKey
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.0-flash",
       contents: [
         ...history.map(h => ({
           role: h.role === 'ai' ? 'model' : 'user',
