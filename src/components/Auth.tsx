@@ -55,17 +55,25 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'en-US';
+      
+      // Load voices to prefer en-IN
+      const voices = window.speechSynthesis.getVoices();
+      const preferredVoice = voices.find(v => 
+        (v.name.includes('Google') || v.name.includes('Neural')) && 
+        (v.lang.startsWith('en-IN'))
+      ) || voices.find(v => v.lang.startsWith('en-GB') || v.lang.startsWith('en-US')) || voices[0];
+
+      if (preferredVoice) utterance.voice = preferredVoice;
+      
+      utterance.lang = 'en-IN';
       utterance.rate = 1;
+      utterance.volume = 1;
       window.speechSynthesis.speak(utterance);
     }
   };
 
-  useEffect(() => {
-    if (showApiKeyStep && !isSuccess) {
-      speak(voiceMessages[currentStep as keyof typeof voiceMessages]);
-    }
-  }, [currentStep, showApiKeyStep, isSuccess]);
+  // Removed useEffect auto-trigger as browsers block it without user gesture.
+  // Replaced with manual trigger and button-hook triggers.
 
   const handleSaveApiKey = async () => {
     if (!isValidKey) return;
@@ -128,10 +136,13 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                     />
                   </div>
                   <h2 className="text-3xl font-black text-white text-center tracking-tight mb-2">Activate AI</h2>
-                  <div className="flex items-center gap-2 px-4 py-1 bg-slate-800/80 rounded-full border border-slate-700/50">
-                    <Volume2 className="w-3 h-3 text-amber-500 animate-pulse" />
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">Nexus Voice (EN): Step {currentStep}</span>
-                  </div>
+                  <button 
+                    onClick={() => speak(voiceMessages[currentStep as keyof typeof voiceMessages])}
+                    className="flex items-center gap-2 px-4 py-1 bg-slate-800/80 rounded-full border border-amber-500/30 hover:bg-amber-500/10 hover:border-amber-500/60 transition-all cursor-pointer group"
+                  >
+                    <Volume2 className="w-3 h-3 text-amber-500 animate-pulse group-hover:scale-125 transition-transform" />
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">Nexus Voice (EN): Step {currentStep} · Tap to replay</span>
+                  </button>
                   <p className="mt-4 text-slate-500 text-[10px] font-medium text-center italic max-w-[200px]">
                     "{voiceMessages[currentStep as keyof typeof voiceMessages]}"
                   </p>
@@ -168,7 +179,10 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                           href="https://aistudio.google.com/app/apikey" 
                           target="_blank" 
                           rel="noopener noreferrer"
-                          onClick={() => setCurrentStep(2)}
+                          onClick={() => {
+                            setCurrentStep(2);
+                            speak(voiceMessages[2]);
+                          }}
                           className="flex items-center justify-between w-full bg-amber-500 hover:bg-amber-400 text-slate-950 p-5 rounded-2xl transition-all shadow-xl shadow-amber-500/10 group font-bold"
                         >
                           <span>Obtain Free API Key</span>
@@ -190,7 +204,10 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                           Make sure to copy the key (AIza...) to your clipboard.
                         </p>
                         <button 
-                          onClick={() => setCurrentStep(3)}
+                          onClick={() => {
+                            setCurrentStep(3);
+                            speak(voiceMessages[3]);
+                          }}
                           className="flex items-center justify-center gap-3 w-full bg-slate-800 hover:bg-slate-700 text-white p-5 rounded-2xl border border-slate-700 transition-all font-bold"
                         >
                           Key Copied <ChevronRight size={20} />
@@ -251,7 +268,11 @@ export default function Auth({ onLogin, mode = 'user', isClerkAuthenticated = fa
                 </AnimatePresence>
                 {currentStep > 1 && (
                   <button 
-                    onClick={() => setCurrentStep(prev => prev - 1)} 
+                    onClick={() => {
+                      const prevStep = currentStep - 1;
+                      setCurrentStep(prevStep);
+                      speak(voiceMessages[prevStep as keyof typeof voiceMessages]);
+                    }} 
                     className="w-full mt-4 text-slate-600 text-[10px] font-bold uppercase tracking-widest hover:text-white transition-colors"
                   >
                     Go Back
