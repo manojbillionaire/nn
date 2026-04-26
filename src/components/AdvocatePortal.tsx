@@ -1152,7 +1152,23 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
             <button onClick={() => { setCamOn(!camOn); setView('consult'); }} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-500 ${camOn ? 'bg-indigo-600 text-white shadow-[0_0_20px_rgba(79,70,229,0.4)] scale-110' : 'bg-slate-800 text-slate-500 hover:text-slate-300'}`}>
               <Icon path="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" size={22} />
             </button>
-            <button onClick={() => { setVoiceAiOn(!voiceAiOn); setView('consult'); }} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-500 ${voiceAiOn ? 'bg-amber-500 text-black shadow-[0_0_20px_rgba(245,158,11,0.4)] scale-110' : 'bg-slate-800 text-slate-500 hover:text-slate-300'}`}>
+            <button 
+              onClick={() => { 
+                const newState = !voiceAiOn;
+                setVoiceAiOn(newState); 
+                setView('consult');
+                if (newState && 'speechSynthesis' in window) {
+                  window.speechSynthesis.cancel();
+                  const u = new SpeechSynthesisUtterance("Nexus Voice Intelligence Active");
+                  const voices = window.speechSynthesis.getVoices();
+                  const voice = voices.find(v => v.lang.startsWith('en-IN') || v.lang.startsWith('en')) || voices[0];
+                  if (voice) u.voice = voice;
+                  u.volume = 1;
+                  window.speechSynthesis.speak(u);
+                }
+              }} 
+              className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-500 ${voiceAiOn ? 'bg-amber-500 text-black shadow-[0_0_20px_rgba(245,158,11,0.4)] scale-110' : 'bg-slate-800 text-slate-500 hover:text-slate-300'}`}
+            >
               <Icon path="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" size={22} />
             </button>
           </div>

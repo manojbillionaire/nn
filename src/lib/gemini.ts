@@ -38,6 +38,11 @@ export async function speakWithGemini(text: string, apiKey?: string): Promise<bo
     const cleanText = text.replace(/\*/g, '').replace(/#/g, '').replace(/_{1,2}/g, '').trim();
     
     const startSpeaking = () => {
+      // Force resume in case it's paused
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
+
       const utterance = new SpeechSynthesisUtterance(cleanText);
       
       // Try to find a high-quality voice
@@ -101,7 +106,7 @@ export async function consultGemini(message: string, history: any[] = [], apiKey
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-2.5-flash",
       contents: [
         ...history.map(h => ({
           role: h.role === 'ai' ? 'model' : 'user',
