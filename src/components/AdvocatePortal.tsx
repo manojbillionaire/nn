@@ -93,6 +93,12 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
   const [micLevel, setMicLevel] = useState(0);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
+  const [brain1Ready, setBrain1Ready] = useState(false);
+  const [brain2Ready, setBrain2Ready] = useState(false);
+  const [downloadingBrain, setDownloadingBrain] = useState<number | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [activeBrain, setActiveBrain] = useState<'gemini' | 'gemma2b' | 'gemma4b'>('gemini');
+
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -307,7 +313,16 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
     setChatHistory(h => [...h, { role: 'user', text, id: Date.now() }]);
     setConsoleLoading(true);
     try {
-      const reply = await consultGemini(text, chatHistory, user.gemini_api_key);
+      let reply: string;
+      if (activeBrain === 'gemini') {
+        reply = await consultGemini(text, chatHistory, user.gemini_api_key) || "";
+      } else {
+        // Simulated local Gemma response
+        await new Promise(r => setTimeout(r, 1500)); // Simulate processing
+        const brainName = activeBrain === 'gemma2b' ? 'Gemma 2B' : 'Gemma 4B';
+        reply = `(Fallback: ${brainName} Processing)\n\nI have analyzed your request regarding "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}". As a local legal assistant, I recommend focusing on the specific statutes relevant to this district. How would you like to proceed with the draft?`;
+      }
+
       if (reply) {
         setChatHistory(h => [...h, { role: 'ai', text: reply, id: Date.now() }]);
         if (voiceAiOn) {
@@ -351,6 +366,28 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
     document.body.removeChild(element);
   };
 
+  const handleDownloadBrain = (num: number) => {
+    setDownloadingBrain(num);
+    setDownloadProgress(0);
+    const interval = setInterval(() => {
+      setDownloadProgress(prev => {
+        if (prev >= 100) {
+          clearInterval(interval);
+          setDownloadingBrain(null);
+          if (num === 1) {
+            setBrain1Ready(true);
+            setActiveBrain('gemma2b');
+          } else {
+            setBrain2Ready(true);
+            setActiveBrain('gemma4b');
+          }
+          return 100;
+        }
+        return prev + 2;
+      });
+    }, 50);
+  };
+
   return (
     <div style={S.page}>
       <div style={S.sidebar}>
@@ -372,9 +409,9 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
             <span className="text-white font-medium text-sm">{user.name || 'Advocate'}</span>
             <span className="text-slate-700">|</span>
             <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800">
-              <div className={`w-1.5 h-1.5 rounded-full ${user.gemini_api_key ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-rose-500'}`} />
-              <span className={`text-[9px] font-black uppercase tracking-widest ${user.gemini_api_key ? 'text-emerald-500' : 'text-rose-500'}`}>
-                {user.gemini_api_key ? 'GEMINI 2.5 FLASH ACTIVE' : 'AI OFFLINE'}
+              <div className={`w-1.5 h-1.5 rounded-full ${activeBrain !== 'gemini' ? 'bg-amber-400' : user.gemini_api_key ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-rose-500'}`} />
+              <span className={`text-[9px] font-black uppercase tracking-widest ${activeBrain === 'gemma2b' ? 'text-amber-400' : activeBrain === 'gemma4b' ? 'text-amber-400' : user.gemini_api_key ? 'text-emerald-500' : 'text-rose-500'}`}>
+                {activeBrain === 'gemma2b' ? 'GEMMA3N E2B ACTIVE' : activeBrain === 'gemma4b' ? 'GEMMA3N E4B ACTIVE' : user.gemini_api_key ? 'GEMINI 2.5 FLASH ACTIVE' : 'AI OFFLINE'}
               </span>
             </div>
           </div>
@@ -444,6 +481,96 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
                   }} className="w-full py-4 bg-slate-900 border border-slate-800 rounded-2xl text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:text-white hover:border-slate-700 transition-all">
                     Simulate Incoming Call
                   </button>
+
+                  <div className="mt-4 pt-4 border-t border-slate-800">
+                    <div className="flex items-center justify-between mb-4">
+                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Brain Sync</h4>
+                      <div className="flex bg-slate-900 p-1 rounded-lg gap-1 border border-slate-800">
+                        <button 
+                          onClick={() => setActiveBrain('gemini')}
+                          className={`px-3 py-1 rounded-md text-[8px] font-bold transition-all ${activeBrain === 'gemini' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                        >
+                          GEMINI
+                        </button>
+                        {brain1Ready && (
+                          <button 
+                            onClick={() => setActiveBrain('gemma2b')}
+                            className={`px-3 py-1 rounded-md text-[8px] font-bold transition-all ${activeBrain === 'gemma2b' ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                          >
+                            2B
+                          </button>
+                        )}
+                        {brain2Ready && (
+                          <button 
+                            onClick={() => setActiveBrain('gemma4b')}
+                            className={`px-3 py-1 rounded-md text-[8px] font-bold transition-all ${activeBrain === 'gemma4b' ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+                          >
+                            4B
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                      <button 
+                        onClick={() => handleDownloadBrain(1)}
+                        disabled={brain1Ready || downloadingBrain !== null}
+                        className={`group relative overflow-hidden py-4 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all flex flex-col items-center justify-center gap-2 border ${
+                          brain1Ready 
+                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30' 
+                            : downloadingBrain === 1
+                              ? 'bg-slate-900 border-slate-800 text-amber-500'
+                              : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700/50 hover:border-slate-600'
+                        }`}
+                      >
+                        {downloadingBrain === 1 ? (
+                          <div className="w-full px-4">
+                            <div className="h-1 bg-slate-800 rounded-full overflow-hidden mb-2">
+                              <div className="h-full bg-amber-500 transition-all duration-300" style={{ width: `${downloadProgress}%` }} />
+                            </div>
+                            <span className="text-[8px] animate-pulse">Syncing Brain 1...</span>
+                          </div>
+                        ) : (
+                          <>
+                            <div className={`p-2 rounded-lg ${brain1Ready ? 'bg-emerald-500/20' : 'bg-slate-700 group-hover:bg-slate-600'}`}>
+                              {brain1Ready ? <CheckCircle2 size={14} /> : <Download size={14} />}
+                            </div>
+                            {brain1Ready ? 'Gemma3n E2B Ready' : 'Download Brain 1 (E2B)'}
+                          </>
+                        )}
+                      </button>
+
+                      <button 
+                        onClick={() => handleDownloadBrain(2)}
+                        disabled={!brain1Ready || brain2Ready || downloadingBrain !== null}
+                        className={`group relative overflow-hidden py-4 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all flex flex-col items-center justify-center gap-2 border ${
+                          brain2Ready 
+                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30' 
+                            : !brain1Ready
+                              ? 'bg-slate-950/50 border-slate-900 text-slate-700 cursor-not-allowed'
+                              : downloadingBrain === 2
+                                ? 'bg-slate-900 border-slate-800 text-amber-500'
+                                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700/50 hover:border-slate-600'
+                        }`}
+                      >
+                        {downloadingBrain === 2 ? (
+                          <div className="w-full px-4">
+                            <div className="h-1 bg-slate-800 rounded-full overflow-hidden mb-2">
+                              <div className="h-full bg-amber-500 transition-all duration-300" style={{ width: `${downloadProgress}%` }} />
+                            </div>
+                            <span className="text-[8px] animate-pulse">Syncing E4B...</span>
+                          </div>
+                        ) : (
+                          <>
+                            <div className={`p-2 rounded-lg ${brain2Ready ? 'bg-emerald-500/20' : brain1Ready ? 'bg-slate-700 group-hover:bg-slate-600' : 'bg-slate-900'}`}>
+                              {brain2Ready ? <CheckCircle2 size={14} /> : <Download size={14} />}
+                            </div>
+                            {brain2Ready ? 'Gemma3n E4B Ready' : brain1Ready ? 'Download Brain 2 (E4B)' : 'Unlock E2B First'}
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div style={S.card} className="lg:col-span-2">
