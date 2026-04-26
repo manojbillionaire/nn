@@ -327,12 +327,22 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
             };
 
             recognition.onerror = (event: any) => {
+              if (event.error === 'no-speech') {
+                // Ignore no-speech errors to reduce console noise
+                return;
+              }
               console.error('Speech recognition error', event.error);
             };
 
             recognition.onend = () => {
+              // Only restart if voice AI is actually on and NOT currently speaking
               if (voiceAiOn && !isSpeaking) {
-                try { recognition.start(); } catch(e) {}
+                try { 
+                  // Add a small delay before restart to prevent tight loops
+                  setTimeout(() => {
+                    if (voiceAiOn && !isSpeaking) recognition.start();
+                  }, 300);
+                } catch(e) {}
               }
             };
 
@@ -439,11 +449,16 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
   useEffect(() => {
     if (voiceAiOn && !isSpeaking && recognitionRef.current) {
       try {
-        recognitionRef.current.start();
+        // Small delay to ensure synthesis has fully released audio hardware
+        setTimeout(() => {
+          if (voiceAiOn && !isSpeaking && recognitionRef.current) {
+            recognitionRef.current.start();
+          }
+        }, 500);
       } catch (e) {
         // Recognition might already be running
       }
-    } else if (isSpeaking && recognitionRef.current) {
+    } else if ((isSpeaking || !voiceAiOn) && recognitionRef.current) {
       try {
         recognitionRef.current.stop();
       } catch (e) {

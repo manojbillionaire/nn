@@ -88,15 +88,8 @@ export async function speakWithGemini(text: string, apiKey?: string): Promise<bo
 
     // Safety timeout: resolve if it gets stuck
     setTimeout(() => {
-      if (window.speechSynthesis.speaking) {
-        console.log("Speech is taking longer than expected, resolving anyway.");
-        resolve(true);
-      } else if (!window.speechSynthesis.pending) {
-        // If not even pending, something went wrong
-        console.warn("Speech stuck in state. Moving on.");
-        resolve(false);
-      }
-    }, 20000);
+      resolve(true);
+    }, 15000);
   });
 }
 
