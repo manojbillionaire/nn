@@ -43,7 +43,7 @@ export async function speakWithGemini(text: string, apiKey?: string) {
     const cleanText = text.replace(/\*/g, '').replace(/#/g, '').replace(/_{1,2}/g, '').trim();
 
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash", 
+      model: "gemini-2.5-flash", 
       contents: [{ parts: [{ text: cleanText }] }],
       config: {
         responseModalities: ["AUDIO"] as any,
@@ -51,9 +51,10 @@ export async function speakWithGemini(text: string, apiKey?: string) {
     });
 
     const candidate = response.candidates?.[0];
-    const base64Audio = candidate?.content?.parts?.[0]?.inlineData?.data;
+    const audioPart = candidate?.content?.parts?.find((p: any) => p.inlineData);
+    const base64Audio = audioPart?.inlineData?.data;
     
-    console.log("Gemini TTS candidate found:", !!candidate);
+    console.log("Gemini 2.5 candidate found:", !!candidate);
     if (base64Audio) {
       console.log("Audio data received, decoding...");
       const audioData = atob(base64Audio);
@@ -112,7 +113,7 @@ export async function consultGemini(message: string, history: any[] = [], apiKey
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+      model: "gemini-2.5-flash",
       contents: [
         ...history.map(h => ({
           role: h.role === 'ai' ? 'model' : 'user',

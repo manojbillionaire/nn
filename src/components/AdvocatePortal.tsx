@@ -519,7 +519,7 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
               <div className="flex items-center gap-1.5 border-r border-slate-800 pr-2 mr-2">
                 <div className={`w-1.5 h-1.5 rounded-full ${user.gemini_api_key ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-700'}`} />
                 <span className={`text-[9px] font-black uppercase tracking-widest ${user.gemini_api_key ? 'text-emerald-500' : 'text-slate-600'}`}>
-                  Gemini {activeBrain === 'gemini' ? 'Active' : 'Standby'}
+                  Gemini 2.5 {activeBrain === 'gemini' ? 'Active' : 'Standby'}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
