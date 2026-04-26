@@ -195,25 +195,51 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
     return () => sse.close();
   }, []);
 
+  const [userInteracted, setUserInteracted] = useState(false);
+
+  useEffect(() => {
+    const handleInteraction = () => {
+      setUserInteracted(true);
+      // Resume audio context if it exists
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        audioContextRef.current.resume();
+      }
+      // Also try to speak a silent sound to "unlock" SpeechSynthesis/Audio
+      if ('speechSynthesis' in window) {
+        const u = new SpeechSynthesisUtterance("");
+        u.volume = 0;
+        window.speechSynthesis.speak(u);
+      }
+    };
+    window.addEventListener('click', handleInteraction, { once: true });
+    window.addEventListener('keydown', handleInteraction, { once: true });
+    return () => {
+      window.removeEventListener('click', handleInteraction);
+      window.removeEventListener('keydown', handleInteraction);
+    };
+  }, []);
+
   // Personalized Welcome Voice
   useEffect(() => {
-    if (user.gemini_api_key && !welcomeSpoken && view === 'command') {
+    if (user.gemini_api_key && !welcomeSpoken && view === 'command' && userInteracted) {
       const triggerWelcome = async () => {
         try {
           const userName = user.name || 'Advocate';
           setIsSpeaking(true);
-          await speakWithGemini(`Welcome to Nexus Justice, Advocate ${userName}. How can I help you?`, user.gemini_api_key);
-          setIsSpeaking(false);
+          console.log("Attempting welcome voice for:", userName);
+          await speakWithGemini(`Welcome to Nexus Justice, Advocate ${userName}. How can I help you today?`, user.gemini_api_key);
           setWelcomeSpoken(true);
         } catch (err) {
           console.error("Failed to speak welcome:", err);
+        } finally {
+          setIsSpeaking(false);
         }
       };
       // Delay slightly for UI to settle
-      const timer = setTimeout(triggerWelcome, 2000);
+      const timer = setTimeout(triggerWelcome, 1000);
       return () => clearTimeout(timer);
     }
-  }, [user.gemini_api_key, welcomeSpoken, view, user.name]);
+  }, [user.gemini_api_key, welcomeSpoken, view, user.name, userInteracted]);
 
   // Camera Management
   useEffect(() => {
