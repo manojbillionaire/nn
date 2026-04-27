@@ -107,16 +107,31 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
   const camStreamRef = useRef<MediaStream | null>(null);
   const recognitionRef = useRef<any>(null);
   const isRecognitionActive = useRef(false);
+  const isStartingRef = useRef(false);
 
   const safeStartRecognition = useCallback(() => {
-    if (recognitionRef.current && !isRecognitionActive.current) {
+    if (recognitionRef.current && !isRecognitionActive.current && !isStartingRef.current && voiceAiOn && !isSpeaking) {
       try {
+        isStartingRef.current = true;
         recognitionRef.current.start();
-        isRecognitionActive.current = true;
       } catch (e) {
-        console.warn("Speech recognition already started or error:", e);
+        isStartingRef.current = false;
       }
     }
+  }, [voiceAiOn, isSpeaking]);
+
+  const stopAiVoiceCompletely = useCallback(() => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+    }
+    isRecognitionActive.current = false;
+    isStartingRef.current = false;
+    setIsSpeaking(false);
   }, []);
 
   const [kbDocs, setKbDocs] = useState([
@@ -328,6 +343,7 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
 
             recognition.onstart = () => {
               isRecognitionActive.current = true;
+              isStartingRef.current = false;
             };
 
             recognition.onresult = (event: any) => {
@@ -354,17 +370,26 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
 
             recognition.onend = () => {
               isRecognitionActive.current = false;
+              isStartingRef.current = false;
               // Only restart if voice AI is actually on and NOT currently speaking
               if (voiceAiOn && !isSpeaking) {
-                // Add a small delay before restart to prevent tight loops
-                setTimeout(() => {
+                // Add a bigger delay before restart to prevent tight loops and aborted errors
+                const timer = setTimeout(() => {
                   if (voiceAiOn && !isSpeaking) safeStartRecognition();
-                }, 300);
+                }, 1000);
+                return () => clearTimeout(timer);
+              }
+            };
+            
+            recognition.onerror = (event: any) => {
+              isStartingRef.current = false;
+              if (event.error === 'aborted') {
+                isRecognitionActive.current = false;
               }
             };
 
             recognitionRef.current = recognition;
-            safeStartRecognition();
+            if (voiceAiOn) safeStartRecognition();
           } else {
             console.warn("Speech recognition not supported in this browser.");
             setVoiceAiReply("Voice input (STT) not supported in this browser. Please use Chrome.");
@@ -464,25 +489,26 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
   };
 
   useEffect(() => {
-    if (voiceAiOn && !isSpeaking && recognitionRef.current) {
+    if (voiceAiOn && !isSpeaking) {
       // Small delay to ensure synthesis has fully released audio hardware
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (voiceAiOn && !isSpeaking) {
           safeStartRecognition();
         }
-      }, 500);
-    } else if ((isSpeaking || !voiceAiOn) && recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-        isRecognitionActive.current = false;
-      } catch (e) {
-        // Recognition might already be stopped
+      }, 700);
+      return () => clearTimeout(timer);
+    } else if (!voiceAiOn || isSpeaking) {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch (e) {}
       }
+      isRecognitionActive.current = false;
     }
   }, [isSpeaking, voiceAiOn, safeStartRecognition]);
 
   const resetChat = () => {
-    stopAiAudio();
+    stopAiVoiceCompletely();
     setChatHistory([]);
     setVoiceAiReply('');
     setVoiceAiOn(false);
@@ -502,9 +528,9 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
     document.body.removeChild(element);
   };
 
-  const handleDownloadBrain = (num: number) => {
-    // Alert user about Wifi for large model download
-    if (num === 2 && !showWifiWarning) {
+  const handleDownloadBrain = (num: number, bypassWarning = false) => {
+    // Custom UI warning is handled in the JSX block
+    if (num === 2 && !showWifiWarning && !brain2Ready && downloadingBrain === null && !bypassWarning) {
       setShowWifiWarning(true);
       return;
     }
@@ -554,15 +580,15 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
             <span className="text-slate-700">|</span>
             <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/50 border border-slate-800">
               <div className="flex items-center gap-1.5 border-r border-slate-800 pr-2 mr-2">
-                <div className={`w-1.5 h-1.5 rounded-full ${user.gemini_api_key ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-700'}`} />
-                <span className={`text-[9px] font-black uppercase tracking-widest ${user.gemini_api_key ? 'text-emerald-500' : 'text-slate-600'}`}>
+                <div className={`w-1.5 h-1.5 rounded-full ${user.gemini_api_key ? (activeBrain === 'gemini' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-indigo-400') : 'bg-slate-700'}`} />
+                <span className={`text-[9px] font-black uppercase tracking-widest ${user.gemini_api_key ? (activeBrain === 'gemini' ? 'text-emerald-500' : 'text-indigo-400') : 'text-slate-600'}`}>
                   Gemini 2.5 {activeBrain === 'gemini' ? 'Primary' : 'Standby'}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
-                <div className={`w-1.5 h-1.5 rounded-full ${activeBrain === 'gemini' ? 'bg-indigo-400' : 'bg-slate-700'}`} />
-                <span className={`text-[9px] font-black uppercase tracking-widest ${activeBrain === 'gemini' ? 'text-indigo-400' : 'text-slate-600'}`}>
-                  Gemma 2 {activeBrain === 'gemini' ? 'Fallback Active' : 'Off'}
+                <div className={`w-1.5 h-1.5 rounded-full ${activeBrain !== 'gemini' ? 'bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-slate-700/50'}`} />
+                <span className={`text-[9px] font-black uppercase tracking-widest ${activeBrain !== 'gemini' ? 'text-amber-400' : 'text-slate-600'}`}>
+                  Gemma 2 {activeBrain === 'gemini' ? 'Fallback Ready' : 'Primary Active'}
                 </span>
               </div>
             </div>
@@ -682,7 +708,7 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
                             <button 
                               onClick={() => {
                                 setShowWifiWarning(false);
-                                handleDownloadBrain(2);
+                                handleDownloadBrain(2, true);
                               }}
                               className="px-3 py-1 bg-amber-500 text-black text-[8px] font-bold rounded-lg"
                             >
@@ -1252,6 +1278,8 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
                   if (voice) u.voice = voice;
                   u.volume = 1;
                   window.speechSynthesis.speak(u);
+                } else if (!newState) {
+                  stopAiVoiceCompletely();
                 }
               }} 
               className={`w-14 h-14 rounded-full flex items-center justify-center transition-all duration-500 ${voiceAiOn ? 'bg-amber-500 text-black shadow-[0_0_20px_rgba(245,158,11,0.4)] scale-110' : 'bg-slate-800 text-slate-500 hover:text-slate-300'}`}
