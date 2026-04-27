@@ -97,21 +97,35 @@ export async function consultGemini(message: string, history: any[] = [], apiKey
   const ai = getGemini(apiKey);
   if (!ai) throw new Error("Gemini AI not initialized.");
 
+  const contents = [
+    ...history.map(h => ({
+      role: h.role === 'ai' ? 'model' : 'user',
+      parts: [{ text: h.text }]
+    })),
+    { role: 'user', parts: [{ text: message }] }
+  ];
+
   try {
+    // Primary: Gemini 2.5 Flash
+    console.log("Consulting primary model: gemini-2.5-flash");
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: [
-        ...history.map(h => ({
-          role: h.role === 'ai' ? 'model' : 'user',
-          parts: [{ text: h.text }]
-        })),
-        { role: 'user', parts: [{ text: message }] }
-      ]
+      contents
     });
-
     return response.text;
   } catch (error) {
-    console.error("Gemini Consult Error:", error);
-    throw error;
+    console.warn("Gemini 2.5 Flash encountered an issue. Falling back to Gemma 2...", error);
+    
+    try {
+      // Fallback: Gemma 2
+      const fallbackResponse = await ai.models.generateContent({
+        model: "gemma-2-9b-it",
+        contents
+      });
+      return fallbackResponse.text;
+    } catch (fallbackError) {
+      console.error("Gemma fallback also failed:", fallbackError);
+      throw fallbackError;
+    }
   }
 }
