@@ -99,6 +99,7 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
   const [downloadingBrain, setDownloadingBrain] = useState<number | null>(null);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [activeBrain, setActiveBrain] = useState<'gemini' | 'gemma2b' | 'gemma4b'>('gemini');
+  const [showWifiWarning, setShowWifiWarning] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -503,7 +504,8 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
 
   const handleDownloadBrain = (num: number) => {
     // Alert user about Wifi for large model download
-    if (num === 2 && !window.confirm("Downloading Gemma E4B (Second Brain) requires significant data (~2.5GB). It is highly recommended to use a stable WIFI connection. Continue?")) {
+    if (num === 2 && !showWifiWarning) {
+      setShowWifiWarning(true);
       return;
     }
 
@@ -516,10 +518,10 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
           setDownloadingBrain(null);
           if (num === 1) {
             setBrain1Ready(true);
-            setActiveBrain('gemma2b');
+            // Don't auto-switch, keep Gemini Primary
           } else {
             setBrain2Ready(true);
-            setActiveBrain('gemma4b');
+            // Don't auto-switch, keep Gemini Primary
           }
           return 100;
         }
@@ -669,6 +671,32 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
                     </div>
                     
                     <div className="grid grid-cols-2 gap-3">
+                      {showWifiWarning && !brain2Ready && downloadingBrain === null && (
+                        <div className="col-span-full mb-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex flex-col gap-2">
+                          <div className="flex items-center gap-2 text-amber-500">
+                            <Wifi size={14} />
+                            <span className="text-[9px] font-black uppercase tracking-wider">Wifi Highly Recommended</span>
+                          </div>
+                          <p className="text-[8px] text-amber-500/70 leading-tight">Gemma E4B is ~2.5GB. Proceed with download?</p>
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => {
+                                setShowWifiWarning(false);
+                                handleDownloadBrain(2);
+                              }}
+                              className="px-3 py-1 bg-amber-500 text-black text-[8px] font-bold rounded-lg"
+                            >
+                              START SYNC
+                            </button>
+                            <button 
+                              onClick={() => setShowWifiWarning(false)}
+                              className="px-3 py-1 bg-slate-800 text-slate-400 text-[8px] font-bold rounded-lg"
+                            >
+                              CANCEL
+                            </button>
+                          </div>
+                        </div>
+                      )}
                       <button 
                         onClick={() => handleDownloadBrain(1)}
                         disabled={brain1Ready || downloadingBrain !== null}
