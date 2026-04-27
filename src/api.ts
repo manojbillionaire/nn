@@ -12,4 +12,12 @@ export const setAuthToken = (token: string | null) => {
   }
 };
 
+export const setUserEmail = (email: string | null) => {
+  if (email) {
+    api.defaults.headers.common['x-user-email'] = email;
+  } else {
+    delete api.defaults.headers.common['x-user-email'];
+  }
+};
+
 export default api;

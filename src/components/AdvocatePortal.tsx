@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from 'react-markdown';
-import api, { setAuthToken } from '../api';
-import { UserButton, useAuth } from "@clerk/clerk-react";
+import api from '../api';
 import { motion, AnimatePresence } from 'motion/react';
 import { speakWithGemini, consultGemini, stopSpeaking } from "../lib/gemini";
 import { 
@@ -23,7 +22,9 @@ import {
   Copy,
   Trash2,
   Download,
-  RefreshCw
+  RefreshCw,
+  LogOut,
+  Wifi
 } from 'lucide-react';
 
 const Icon = ({ path, size = 20, strokeWidth = 2 }: { path: string | string[], size?: number, strokeWidth?: number }) => (
@@ -64,7 +65,7 @@ const getCatRgb = (color: string) => {
   return map[color] || '99,102,241';
 };
 
-export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout: () => void }) {
+export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user: any, onLogout: () => void, onUpdateUser?: (u: any) => void }) {
   const [view, setView] = useState("command");
 
   const [clients, setClients] = useState(CLIENTS);
@@ -104,6 +105,18 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
   const micStreamRef = useRef<MediaStream | null>(null);
   const camStreamRef = useRef<MediaStream | null>(null);
   const recognitionRef = useRef<any>(null);
+  const isRecognitionActive = useRef(false);
+
+  const safeStartRecognition = useCallback(() => {
+    if (recognitionRef.current && !isRecognitionActive.current) {
+      try {
+        recognitionRef.current.start();
+        isRecognitionActive.current = true;
+      } catch (e) {
+        console.warn("Speech recognition already started or error:", e);
+      }
+    }
+  }, []);
 
   const [kbDocs, setKbDocs] = useState([
     { id: 1, category: 'railway', name: 'Railways Act, 1989.pdf', size: '2.4 MB', date: '2026-01-12', pages: 184 },
@@ -312,6 +325,10 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
             recognition.interimResults = true;
             recognition.lang = 'en-IN';
 
+            recognition.onstart = () => {
+              isRecognitionActive.current = true;
+            };
+
             recognition.onresult = (event: any) => {
               let interimTranscript = '';
               for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -335,19 +352,18 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
             };
 
             recognition.onend = () => {
+              isRecognitionActive.current = false;
               // Only restart if voice AI is actually on and NOT currently speaking
               if (voiceAiOn && !isSpeaking) {
-                try { 
-                  // Add a small delay before restart to prevent tight loops
-                  setTimeout(() => {
-                    if (voiceAiOn && !isSpeaking) recognition.start();
-                  }, 300);
-                } catch(e) {}
+                // Add a small delay before restart to prevent tight loops
+                setTimeout(() => {
+                  if (voiceAiOn && !isSpeaking) safeStartRecognition();
+                }, 300);
               }
             };
 
-            recognition.start();
             recognitionRef.current = recognition;
+            safeStartRecognition();
           } else {
             console.warn("Speech recognition not supported in this browser.");
             setVoiceAiReply("Voice input (STT) not supported in this browser. Please use Chrome.");
@@ -448,24 +464,21 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
 
   useEffect(() => {
     if (voiceAiOn && !isSpeaking && recognitionRef.current) {
-      try {
-        // Small delay to ensure synthesis has fully released audio hardware
-        setTimeout(() => {
-          if (voiceAiOn && !isSpeaking && recognitionRef.current) {
-            recognitionRef.current.start();
-          }
-        }, 500);
-      } catch (e) {
-        // Recognition might already be running
-      }
+      // Small delay to ensure synthesis has fully released audio hardware
+      setTimeout(() => {
+        if (voiceAiOn && !isSpeaking) {
+          safeStartRecognition();
+        }
+      }, 500);
     } else if ((isSpeaking || !voiceAiOn) && recognitionRef.current) {
       try {
         recognitionRef.current.stop();
+        isRecognitionActive.current = false;
       } catch (e) {
         // Recognition might already be stopped
       }
     }
-  }, [isSpeaking, voiceAiOn]);
+  }, [isSpeaking, voiceAiOn, safeStartRecognition]);
 
   const resetChat = () => {
     stopAiAudio();
@@ -489,6 +502,11 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
   };
 
   const handleDownloadBrain = (num: number) => {
+    // Alert user about Wifi for large model download
+    if (num === 2 && !window.confirm("Downloading Gemma E4B (Second Brain) requires significant data (~2.5GB). It is highly recommended to use a stable WIFI connection. Continue?")) {
+      return;
+    }
+
     setDownloadingBrain(num);
     setDownloadProgress(0);
     const interval = setInterval(() => {
@@ -505,9 +523,11 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
           }
           return 100;
         }
-        return prev + 2;
+        // Downloading larger model takes longer (simulated by slower progress)
+        const increment = num === 2 ? 0.5 : 2;
+        return prev + increment;
       });
-    }, 50);
+    }, num === 2 ? 100 : 50);
   };
 
   return (
@@ -534,7 +554,7 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
               <div className="flex items-center gap-1.5 border-r border-slate-800 pr-2 mr-2">
                 <div className={`w-1.5 h-1.5 rounded-full ${user.gemini_api_key ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-700'}`} />
                 <span className={`text-[9px] font-black uppercase tracking-widest ${user.gemini_api_key ? 'text-emerald-500' : 'text-slate-600'}`}>
-                  Gemini 2.0 {activeBrain === 'gemini' ? 'Primary' : 'Standby'}
+                  Gemini 2.5 {activeBrain === 'gemini' ? 'Primary' : 'Standby'}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
@@ -547,7 +567,13 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
             <span style={{ fontSize: 12, fontWeight: 900, color: '#fff' }} className="hidden sm:inline">Nexus Justice <span style={{ color: '#6366f1' }}>v3.2</span></span>
-            <UserButton afterSignOutUrl="/" />
+            <button 
+              onClick={onLogout}
+              className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-slate-400 hover:text-rose-500 hover:border-rose-500/30 transition-all text-[10px] font-bold uppercase tracking-wider"
+            >
+              <LogOut size={14} />
+              <span className="hidden md:inline">Logout</span>
+            </button>
           </div>
         </header>
 
@@ -673,30 +699,39 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
 
                       <button 
                         onClick={() => handleDownloadBrain(2)}
-                        disabled={!brain1Ready || brain2Ready || downloadingBrain !== null}
                         className={`group relative overflow-hidden py-4 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all flex flex-col items-center justify-center gap-2 border ${
                           brain2Ready 
                             ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30' 
-                            : !brain1Ready
-                              ? 'bg-slate-950/50 border-slate-900 text-slate-700 cursor-not-allowed'
-                              : downloadingBrain === 2
+                            : downloadingBrain === 2
                                 ? 'bg-slate-900 border-slate-800 text-amber-500'
                                 : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700/50 hover:border-slate-600'
                         }`}
                       >
                         {downloadingBrain === 2 ? (
                           <div className="w-full px-4">
+                            <div className="flex items-center justify-center gap-1.5 mb-1.5">
+                              <Wifi size={10} className="text-amber-500 animate-pulse" />
+                              <span className="text-[7px] font-bold text-amber-500/70">WIFI Recommended</span>
+                            </div>
                             <div className="h-1 bg-slate-800 rounded-full overflow-hidden mb-2">
                               <div className="h-full bg-amber-500 transition-all duration-300" style={{ width: `${downloadProgress}%` }} />
                             </div>
-                            <span className="text-[8px] animate-pulse">Syncing E4B...</span>
+                            <span className="text-[8px] animate-pulse">Syncing E4B (Second Brain)...</span>
                           </div>
                         ) : (
                           <>
-                            <div className={`p-2 rounded-lg ${brain2Ready ? 'bg-emerald-500/20' : brain1Ready ? 'bg-slate-700 group-hover:bg-slate-600' : 'bg-slate-900'}`}>
+                            <div className={`p-2 rounded-lg ${brain2Ready ? 'bg-emerald-500/20' : 'bg-slate-700 group-hover:bg-slate-600'}`}>
                               {brain2Ready ? <CheckCircle2 size={14} /> : <Download size={14} />}
                             </div>
-                            {brain2Ready ? 'Gemma3n E4B Ready' : brain1Ready ? 'Download Brain 2 (E4B)' : 'Unlock E2B First'}
+                            <div className="flex flex-col gap-1">
+                              <span>{brain2Ready ? 'Gemma3n E4B Ready' : 'Download Brain 2 (E4B)'}</span>
+                              {!brain2Ready && (
+                                <div className="flex items-center justify-center gap-1 opacity-50">
+                                  <Wifi size={8} />
+                                  <span className="text-[7px]">Wifi Required</span>
+                                </div>
+                              )}
+                            </div>
                           </>
                         )}
                       </button>
@@ -1145,6 +1180,15 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
                     {isSpeaking ? 'Nexus Speaking' : 'Nexus Listening'}
                   </span>
                 </div>
+                {isSpeaking && (
+                  <button 
+                    onClick={stopAiAudio}
+                    className="flex items-center gap-2 px-3 py-1 bg-rose-500 text-white rounded-lg text-[8px] font-bold uppercase tracking-wider animate-pulse"
+                  >
+                    <VolumeX size={10} />
+                    Stop Voice
+                  </button>
+                )}
                 <div className="flex gap-1.5 items-end h-4">
                   {[...Array(6)].map((_, i) => (
                     <motion.div 
@@ -1186,6 +1230,15 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
             >
               <Icon path="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" size={22} />
             </button>
+            {isSpeaking && (
+              <button 
+                onClick={stopAiAudio}
+                className="w-14 h-14 rounded-full bg-rose-600 text-white flex items-center justify-center shadow-[0_0_20px_rgba(225,29,72,0.4)] animate-bounce active:scale-90 transition-all pointer-events-auto"
+                title="Stop Speaking"
+              >
+                <VolumeX size={22} />
+              </button>
+            )}
           </div>
         </div>
         {/* Gemini API Key Modal */}
@@ -1195,7 +1248,11 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
               onClose={() => setShowApiKeyModal(false)} 
               onSuccess={() => {
                 setShowApiKeyModal(false);
-                window.location.reload(); // Refresh to catch new user state from backend
+                // Refresh user state immediately to avoid repeated prompts
+                api.get('/api/user/profile').then(res => {
+                  if (onUpdateUser) onUpdateUser(res.data);
+                  else window.location.reload();
+                });
               }}
             />
           )}
@@ -1206,12 +1263,12 @@ export default function AdvocatePortal({ user, onLogout }: { user: any, onLogout
 }
 
 function GeminiKeyModal({ onClose, onSuccess }: { onClose: () => void, onSuccess: () => void }) {
-  const { getToken } = useAuth();
   const [apiKey, setApiKey] = useState('');
   const [currentStep, setCurrentStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [apiKeyError, setApiKeyError] = useState('');
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const isValidKey = apiKey.startsWith('AIza') && apiKey.length > 20;
@@ -1223,12 +1280,18 @@ function GeminiKeyModal({ onClose, onSuccess }: { onClose: () => void, onSuccess
   };
 
   const speak = (text: string) => {
-    if ('speechSynthesis' in window) {
+    if ('speechSynthesis' in window && voiceEnabled) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'en-US';
       utterance.rate = 1;
       window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  const handleStopSpeaking = () => {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
     }
   };
 
@@ -1252,8 +1315,6 @@ function GeminiKeyModal({ onClose, onSuccess }: { onClose: () => void, onSuccess
     setLoading(true);
     setApiKeyError('');
     try {
-      const token = await getToken();
-      if (token) setAuthToken(token);
       const res = await api.post('/api/user/apikey', { apiKey });
       if (res.data?.success) {
         setIsSuccess(true);
@@ -1306,9 +1367,31 @@ function GeminiKeyModal({ onClose, onSuccess }: { onClose: () => void, onSuccess
                   />
                 </div>
                 <h2 className="text-2xl font-black text-white text-center tracking-tight mb-2 uppercase italic">Activate AI</h2>
-                <div className="flex items-center gap-2 px-3 py-1 bg-slate-800/80 rounded-full border border-slate-700/50">
-                  <Volume2 className="w-3 h-3 text-amber-500 animate-pulse" />
-                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">Voice Aid: Step {currentStep}</span>
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 px-3 py-1 bg-slate-800/80 rounded-full border border-slate-700/50">
+                    <Volume2 className="w-3 h-3 text-amber-500 animate-pulse" />
+                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">Voice Aid: Step {currentStep}</span>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      const next = !voiceEnabled;
+                      setVoiceEnabled(next);
+                      if (!next) handleStopSpeaking();
+                    }}
+                    className={`p-2 rounded-full border transition-all ${voiceEnabled ? 'bg-amber-500/10 border-amber-500/20 text-amber-500' : 'bg-slate-800 border-slate-700 text-slate-500'}`}
+                    title={voiceEnabled ? "Mute Voice Guidance" : "Unmute Voice Guidance"}
+                  >
+                    {voiceEnabled ? <Volume2 size={12} /> : <VolumeX size={12} />}
+                  </button>
+                  {voiceEnabled && (
+                    <button 
+                      onClick={handleStopSpeaking}
+                      className="p-2 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-500 hover:bg-rose-500/20 transition-all"
+                      title="Stop Current Voice"
+                    >
+                      <VolumeX size={12} />
+                    </button>
+                  )}
                 </div>
               </div>
 

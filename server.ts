@@ -7,7 +7,6 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import axios from 'axios';
-import { clerkMiddleware, getAuth, createClerkClient } from '@clerk/express';
 import { GoogleGenAI } from "@google/genai";
 
 dotenv.config();
@@ -32,15 +31,19 @@ const sql = (strings: TemplateStringsArray, ...values: any[]) => {
   }
 };
 
-// Initialize Clerk Client for backend management
-const clerkClient = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY });
+// Simplified Auth Middleware
+const simpleAuth = (req: any, res: any, next: any) => {
+  const email = req.headers['x-user-email'];
+  if (!email) return res.status(401).json({ error: 'Unauthorized' });
+  req.userEmail = email;
+  next();
+};
 
 async function initDb() {
   try {
     sql`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        clerk_id TEXT UNIQUE,
         email TEXT UNIQUE,
         name TEXT,
         role TEXT DEFAULT 'advocate',
@@ -83,81 +86,57 @@ async function startServer() {
   app.use(cors());
   app.use(express.json());
 
-  // Check for Clerk Secret Key
-  if (!process.env.CLERK_SECRET_KEY) {
-    console.warn('CRITICAL: CLERK_SECRET_KEY is missing. Profile sync will fail.');
-  }
-
-  app.use(clerkMiddleware());
-
   // --- API Routes ---
 
   // Health Check
   app.get('/api/health', (req, res) => res.json({ status: 'ok', mode: process.env.NODE_ENV }));
 
-  // User Profile - Automatically syncs Clerk data on request
-  app.get('/api/user/profile', async (req, res) => {
-    const { userId } = getAuth(req);
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  // User Profile
+  app.get('/api/user/profile', simpleAuth, async (req: any, res) => {
+    const email = req.userEmail.toLowerCase();
     
     try {
-      const { rows } = sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
+      const { rows } = sql`SELECT * FROM users WHERE LOWER(email) = ${email}`;
       let user = rows[0];
       
       if (!user) {
-        // Fetch full profile from Clerk to populate database
-        const clerkUser = await clerkClient.users.getUser(userId);
-        const email = clerkUser.emailAddresses[0]?.emailAddress;
-        const name = `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || 'Barrister';
+        const name = email.split('@')[0].charAt(0).toUpperCase() + email.split('@')[0].slice(1);
         const barNo = 'BC/' + Math.floor(Math.random() * 10000);
         const code = 'NJ' + Math.random().toString(36).substring(2, 8).toUpperCase();
         
-        const result = sql`
-          INSERT INTO users (clerk_id, email, name, bar_council_no, code) 
-          VALUES (${userId}, ${email}, ${name}, ${barNo}, ${code})
-        `;
-        // In my simple wrapper, I'll need to fetch the inserted user
-        const newUserRes = sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
-        user = newUserRes.rows[0];
-      } else if (!user.email || !user.name) {
-        // Update existing stub users who logged in before we added Clerk API sync
-        const clerkUser = await clerkClient.users.getUser(userId);
-        const email = clerkUser.emailAddresses[0]?.emailAddress;
-        const name = `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || 'Barrister';
-        
         sql`
-          UPDATE users 
-          SET email = ${email}, name = ${name} 
-          WHERE clerk_id = ${userId}
+          INSERT INTO users (email, name, bar_council_no, code) 
+          VALUES (${email}, ${name}, ${barNo}, ${code})
         `;
-        const updatedUserRes = sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
-        user = updatedUserRes.rows[0];
+        const newUserRes = sql`SELECT * FROM users WHERE LOWER(email) = ${email}`;
+        user = newUserRes.rows[0];
       }
       
       res.json(user);
     } catch (err) {
-      console.error('Clerk Sync Error:', err);
-      // Fallback: try to return whatever we have
-      try {
-        const { rows } = sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
-        res.json(rows[0] || { clerk_id: userId, name: 'Barrister' });
-      } catch (innerErr) {
-        res.json({ clerk_id: userId, name: 'Barrister' });
-      }
+      console.error('Sync Error:', err);
+      res.status(500).json({ error: 'Sync Error' });
     }
   });
 
   // Save Gemini API Key
-  app.post('/api/user/apikey', async (req, res) => {
-    const { userId } = getAuth(req);
+  app.post('/api/user/apikey', simpleAuth, async (req: any, res) => {
+    const email = req.userEmail.toLowerCase();
     const { apiKey } = req.body;
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-      const result = sql`UPDATE users SET gemini_api_key = ${apiKey} WHERE clerk_id = ${userId}`;
-      if ((result as any).changes === 0) {
-        return res.status(404).json({ error: 'User not found. Key not saved.' });
+      // First ensure user exists
+      const { rows } = sql`SELECT id FROM users WHERE LOWER(email) = ${email}`;
+      if (rows.length === 0) {
+        // Create user if they somehow don't exist yet
+        const name = email.split('@')[0].toUpperCase();
+        const barNo = 'BC/' + Math.floor(Math.random() * 10000);
+        const code = 'NJ' + Math.random().toString(36).substring(2, 8).toUpperCase();
+        sql`INSERT INTO users (email, name, bar_council_no, code) VALUES (${email}, ${name}, ${barNo}, ${code})`;
       }
+
+      const result = sql`UPDATE users SET gemini_api_key = ${apiKey} WHERE LOWER(email) = ${email}`;
+      console.log(`API Key updated for ${email}. Changes: ${result.changes}`);
       res.json({ success: true });
     } catch (err) {
       console.error('apikey save error:', err);
@@ -166,12 +145,11 @@ async function startServer() {
   });
 
   // Calls Endpoint
-  app.get('/api/calls', async (req, res) => {
-    const { userId } = getAuth(req);
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  app.get('/api/calls', simpleAuth, async (req: any, res) => {
+    const email = req.userEmail;
 
     try {
-      const userRes = sql`SELECT id FROM users WHERE clerk_id = ${userId}`;
+      const userRes = sql`SELECT id FROM users WHERE email = ${email}`;
       const user = userRes.rows[0];
       if (!user) return res.json({ calls: [] });
 
@@ -206,12 +184,11 @@ async function startServer() {
   });
 
   // --- Agency Endpoints ---
-  app.get('/api/agency/advocates', async (req, res) => {
-    const { userId } = getAuth(req);
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  app.get('/api/agency/advocates', simpleAuth, async (req: any, res) => {
+    const email = req.userEmail;
     
     try {
-      const adminRes = sql`SELECT role FROM users WHERE clerk_id = ${userId}`;
+      const adminRes = sql`SELECT role FROM users WHERE email = ${email}`;
       if (adminRes.rows[0]?.role !== 'agency') return res.status(403).json({ error: 'Forbidden' });
 
       const { rows } = sql`SELECT *, STRFTIME('%Y-%m-%d %H:%M:%S', joined_at) as joined_at FROM users WHERE role = 'advocate' ORDER BY joined_at DESC`;
@@ -221,11 +198,13 @@ async function startServer() {
     }
   });
 
-  app.get('/api/agency/stats', async (req, res) => {
-    const { userId } = getAuth(req);
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  app.get('/api/agency/stats', simpleAuth, async (req: any, res) => {
+    const email = req.userEmail;
 
     try {
+      const adminRes = sql`SELECT role FROM users WHERE email = ${email}`;
+      if (adminRes.rows[0]?.role !== 'agency') return res.status(403).json({ error: 'Forbidden' });
+
       const advCount = sql`SELECT COUNT(*) as count FROM users WHERE role = 'advocate'`;
       const affCount = sql`SELECT COUNT(*) as count FROM users WHERE role = 'affiliate'`;
       const callCount = sql`SELECT COUNT(*) as count FROM calls`;
@@ -242,12 +221,11 @@ async function startServer() {
   });
 
   // --- Affiliate Endpoints ---
-  app.get('/api/affiliate/dashboard', async (req, res) => {
-    const { userId } = getAuth(req);
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+  app.get('/api/affiliate/dashboard', simpleAuth, async (req: any, res) => {
+    const email = req.userEmail;
 
     try {
-      const { rows } = sql`SELECT * FROM users WHERE clerk_id = ${userId}`;
+      const { rows } = sql`SELECT * FROM users WHERE email = ${email}`;
       const user = rows[0];
       if (!user || user.role !== 'affiliate') return res.status(403).json({ error: 'Forbidden' });
 

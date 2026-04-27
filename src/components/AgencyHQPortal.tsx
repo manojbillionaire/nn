@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '../api';
-import { LayoutDashboard, Users, CreditCard, AlertCircle, Share2, Megaphone, Brain, Search } from 'lucide-react';
-import { UserButton } from '@clerk/clerk-react';
+import { LayoutDashboard, Users, CreditCard, AlertCircle, Share2, Megaphone, Brain, Search, LogOut } from 'lucide-react';
 
 const Icon = ({ icon: IconComp, size = 20 }: { icon: any, size?: number }) => (
   <IconComp size={size} />
@@ -81,7 +80,13 @@ export default function AgencyHQPortal({ user, onLogout }: { user: any, onLogout
         </nav>
 
         <div className="px-3 mt-auto pt-6 border-t border-slate-800 flex justify-center">
-          <UserButton afterSignOutUrl="/" showName />
+          <button 
+            onClick={onLogout}
+            className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl text-xs font-bold text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-all font-sans uppercase tracking-widest"
+          >
+            <LogOut size={16} />
+            Logout Securely
+          </button>
         </div>
       </div>
 
@@ -105,7 +110,6 @@ export default function AgencyHQPortal({ user, onLogout }: { user: any, onLogout
             <div className="hidden md:flex px-4 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-full text-[10px] font-bold text-amber-500 uppercase tracking-wider items-center">
               {stats.totalAdvocates || 0} Advocates
             </div>
-            <UserButton afterSignOutUrl="/" />
           </div>
         </header>
 
