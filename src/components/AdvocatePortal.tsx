@@ -443,14 +443,29 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
     if (voiceAiOn) setVoiceAiReply("Thinking...");
     setConsoleLoading(true);
     try {
-      let reply: string;
+      let reply: string = "";
+      let usedFallback = false;
+
       if (activeBrain === 'gemini') {
-        reply = await consultGemini(text, chatHistory, user.gemini_api_key) || "";
+        try {
+          if (!user.gemini_api_key) throw new Error("No Key");
+          reply = await consultGemini(text, chatHistory, user.gemini_api_key) || "";
+        } catch (e) {
+          console.warn("Gemini Primary failed, trying local fallback:", e);
+          if (brain2Ready || brain1Ready) {
+            usedFallback = true;
+            await new Promise(r => setTimeout(r, 1000));
+            const brainName = brain2Ready ? 'Gemma3n E4B' : 'Gemma3n E2B';
+            reply = `(Hybrid Fallback: ${brainName} Processing)\n\nI have analyzed your request regarding "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}". As your local fallback brain, I recommend the following...`;
+          } else {
+            throw e;
+          }
+        }
       } else {
-        // Simulated local Gemma response
-        await new Promise(r => setTimeout(r, 1500)); // Simulate processing
+        // Explicit local selection
+        await new Promise(r => setTimeout(r, 1500));
         const brainName = activeBrain === 'gemma2b' ? 'Gemma3n E2B' : 'Gemma3n E4B';
-        reply = `(Fallback: ${brainName} Processing)\n\nI have analyzed your request regarding "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}". As a local legal assistant, I recommend focusing on the specific statutes relevant to this district. How would you like to proceed with the draft?`;
+        reply = `(Local Brain: ${brainName} Processing)\n\nI have analyzed your request regarding "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}". Processing offline for maximum privacy.`;
       }
 
       if (reply) {
@@ -529,8 +544,12 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
   };
 
   const handleDownloadBrain = (num: number, bypassWarning = false) => {
+    if (downloadingBrain !== null) return;
+    if (brain1Ready && num === 1) return;
+    if (brain2Ready && num === 2) return;
+
     // Custom UI warning is handled in the JSX block
-    if (num === 2 && !showWifiWarning && !brain2Ready && downloadingBrain === null && !bypassWarning) {
+    if (num === 2 && !showWifiWarning && !brain2Ready && !bypassWarning) {
       setShowWifiWarning(true);
       return;
     }
@@ -586,9 +605,9 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
-                <div className={`w-1.5 h-1.5 rounded-full ${activeBrain !== 'gemini' ? 'bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : 'bg-slate-700/50'}`} />
+                <div className={`w-1.5 h-1.5 rounded-full ${activeBrain !== 'gemini' ? 'bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : (brain1Ready || brain2Ready ? 'bg-emerald-500/50' : 'bg-slate-700/50')}`} />
                 <span className={`text-[9px] font-black uppercase tracking-widest ${activeBrain !== 'gemini' ? 'text-amber-400' : 'text-slate-600'}`}>
-                  Gemma 2 {activeBrain === 'gemini' ? 'Fallback Ready' : 'Primary Active'}
+                  Gemma 2 {activeBrain === 'gemini' ? (brain1Ready || brain2Ready ? 'Fallback Ready' : 'Sync Required') : 'Active'}
                 </span>
               </div>
             </div>
@@ -728,10 +747,12 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
                         disabled={brain1Ready || downloadingBrain !== null}
                         className={`group relative overflow-hidden py-4 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all flex flex-col items-center justify-center gap-2 border ${
                           brain1Ready 
-                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30' 
+                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30 cursor-default' 
                             : downloadingBrain === 1
                               ? 'bg-slate-900 border-slate-800 text-amber-500'
-                              : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700/50 hover:border-slate-600'
+                              : downloadingBrain !== null
+                                ? 'bg-slate-900/50 border-slate-800 text-slate-700 cursor-not-allowed'
+                                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700/50 hover:border-slate-600 cursor-pointer active:scale-95 shadow-lg shadow-black/20'
                         }`}
                       >
                         {downloadingBrain === 1 ? (
@@ -753,12 +774,15 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
 
                       <button 
                         onClick={() => handleDownloadBrain(2)}
+                        disabled={brain2Ready || downloadingBrain !== null}
                         className={`group relative overflow-hidden py-4 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all flex flex-col items-center justify-center gap-2 border ${
                           brain2Ready 
-                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30' 
+                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30 cursor-default' 
                             : downloadingBrain === 2
                                 ? 'bg-slate-900 border-slate-800 text-amber-500'
-                                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700/50 hover:border-slate-600'
+                                : downloadingBrain !== null
+                                  ? 'bg-slate-900/50 border-slate-800 text-slate-700 cursor-not-allowed'
+                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700/50 hover:border-slate-600 cursor-pointer active:scale-95 shadow-lg shadow-black/20'
                         }`}
                       >
                         {downloadingBrain === 2 ? (
@@ -1359,10 +1383,14 @@ function GeminiKeyModal({ onClose, onSuccess }: { onClose: () => void, onSuccess
 
   const handlePaste = async () => {
     try {
+      if (!navigator.clipboard || !navigator.clipboard.readText) {
+        setApiKeyError('Clipboard API not supported or blocked. Please paste manually.');
+        return;
+      }
       const text = await navigator.clipboard.readText();
       setApiKey(text);
     } catch (e) {
-      alert('Clipboard access denied.');
+      setApiKeyError('Clipboard access denied. Please click the input and paste (Ctrl+V) manually.');
     }
   };
 
