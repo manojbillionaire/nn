@@ -116,6 +116,7 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
         recognitionRef.current.start();
       } catch (e) {
         isStartingRef.current = false;
+        // If it fails with "already started", we just wait for the next attempt
       }
     }
   }, [voiceAiOn, isSpeaking]);
@@ -126,9 +127,12 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
     }
     if (recognitionRef.current) {
       try {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
         recognitionRef.current.stop();
       } catch (e) {}
     }
+    recognitionRef.current = null;
     isRecognitionActive.current = false;
     isStartingRef.current = false;
     setIsSpeaking(false);
@@ -248,7 +252,8 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
     };
   }, []);
 
-  // Personalized Welcome Voice
+  // Personalized Welcome Voice - DISABLED per user feedback "no no voice"
+  /*
   useEffect(() => {
     if (user.gemini_api_key && !welcomeSpoken && view === 'command' && userInteracted) {
       const triggerWelcome = async () => {
@@ -269,6 +274,7 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
       return () => clearTimeout(timer);
     }
   }, [user.gemini_api_key, welcomeSpoken, view, user.name, userInteracted]);
+  */
 
   // Camera Management
   useEffect(() => {
@@ -375,8 +381,8 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
               if (voiceAiOn && !isSpeaking) {
                 // Add a bigger delay before restart to prevent tight loops and aborted errors
                 const timer = setTimeout(() => {
-                  if (voiceAiOn && !isSpeaking) safeStartRecognition();
-                }, 1000);
+                  if (recognitionRef.current && voiceAiOn && !isSpeaking) safeStartRecognition();
+                }, 1500);
                 return () => clearTimeout(timer);
               }
             };
@@ -385,6 +391,12 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
               isStartingRef.current = false;
               if (event.error === 'aborted') {
                 isRecognitionActive.current = false;
+              } else if (event.error === 'network') {
+                console.warn('Speech Recognition Network Error, stopping engine');
+                setVoiceAiOn(false);
+              } else if (event.error === 'not-allowed') {
+                console.warn('Speech Recognition Permission Denied');
+                setVoiceAiOn(false);
               }
             };
 
@@ -548,7 +560,7 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
     if (brain1Ready && num === 1) return;
     if (brain2Ready && num === 2) return;
 
-    // Custom UI warning is handled in the JSX block
+    // Custom UI warning for Large Brain
     if (num === 2 && !showWifiWarning && !brain2Ready && !bypassWarning) {
       setShowWifiWarning(true);
       return;
@@ -556,6 +568,13 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
 
     setDownloadingBrain(num);
     setDownloadProgress(0);
+    
+    // Simulations should be fast for demo purposes
+    const totalTime = num === 2 ? 5000 : 2000; 
+    const steps = 50;
+    const intervalTime = totalTime / steps;
+    const increment = 100 / steps;
+
     const interval = setInterval(() => {
       setDownloadProgress(prev => {
         if (prev >= 100) {
@@ -563,18 +582,14 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
           setDownloadingBrain(null);
           if (num === 1) {
             setBrain1Ready(true);
-            // Don't auto-switch, keep Gemini Primary
           } else {
             setBrain2Ready(true);
-            // Don't auto-switch, keep Gemini Primary
           }
           return 100;
         }
-        // Downloading larger model takes longer (simulated by slower progress)
-        const increment = num === 2 ? 0.5 : 2;
         return prev + increment;
       });
-    }, num === 2 ? 100 : 50);
+    }, intervalTime);
   };
 
   return (
@@ -1348,7 +1363,7 @@ function GeminiKeyModal({ onClose, onSuccess }: { onClose: () => void, onSuccess
   const [loading, setLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [apiKeyError, setApiKeyError] = useState('');
-  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [voiceEnabled, setVoiceEnabled] = useState(false); // Default to false per "no no voice"
   const inputRef = useRef<HTMLInputElement>(null);
 
   const isValidKey = apiKey.startsWith('AIza') && apiKey.length > 20;

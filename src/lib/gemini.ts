@@ -106,43 +106,26 @@ export async function consultGemini(message: string, history: any[] = [], apiKey
   ];
 
   try {
-    // Primary: Gemini 2.5 Flash (User requested)
-    console.log("Consulting primary model: models/gemini-2.5-flash");
-    let response;
-    try {
-      response = await ai.models.generateContent({
-        model: "models/gemini-2.5-flash",
-        contents
-      });
-    } catch (e) {
-      console.warn("Gemini 2.5 Flash not found, trying models/gemini-2.0-flash");
-      response = await ai.models.generateContent({
-        model: "models/gemini-2.0-flash",
-        contents
-      });
-    }
+    // Primary: Gemini 3 Flash (User requested / skill default)
+    console.log("Consulting primary model: gemini-3-flash-preview");
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents
+    });
     return response.text;
   } catch (error) {
-    console.warn("Gemini Flash primary models encountered an issue. Falling back to Gemma 2...", error);
+    console.warn("Gemini 3 Flash primary model encountered an issue. Falling back to Gemini 2.5 Flash:", error);
     
     try {
-      // Fallback: Gemma 2 (Fixed path)
+      // Fallback: Gemini 2.5 Flash
       const fallbackResponse = await ai.models.generateContent({
-        model: "models/gemma-2-9b-it",
+        model: "gemini-2.5-flash-image", // Uses the 2.5 flash model name from skill
         contents
       });
       return fallbackResponse.text;
     } catch (fallbackError) {
-      console.error("Gemma fallback also failed, trying last resort gemini-1.5-flash:", fallbackError);
-      try {
-        const lastResort = await ai.models.generateContent({
-          model: "models/gemini-1.5-flash",
-          contents
-        });
-        return lastResort.text;
-      } catch (e) {
-        throw fallbackError;
-      }
+      console.error("Fallback also failed:", fallbackError);
+      throw fallbackError;
     }
   }
 }
