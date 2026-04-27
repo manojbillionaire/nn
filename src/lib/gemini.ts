@@ -106,15 +106,15 @@ export async function consultGemini(message: string, history: any[] = [], apiKey
   ];
 
   try {
-    // Primary: Gemini 2.5 Flash
-    console.log("Consulting primary model: gemini-2.5-flash");
+    // Primary: Gemini 2.0 Flash (Latest Flash Model)
+    console.log("Consulting primary model: gemini-2.0-flash");
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.0-flash",
       contents
     });
     return response.text;
   } catch (error) {
-    console.warn("Gemini 2.5 Flash encountered an issue. Falling back to Gemma 2...", error);
+    console.warn("Gemini 2.0 Flash encountered an issue. Falling back to Gemma 2...", error);
     
     try {
       // Fallback: Gemma 2
