@@ -10,7 +10,6 @@ import {
   CheckCircle2, 
   ChevronRight, 
   Sparkles, 
-  Volume2, 
   VolumeX,
   AlertTriangle,
   X,
@@ -24,7 +23,21 @@ import {
   Download,
   RefreshCw,
   LogOut,
-  Wifi
+  Wifi,
+  Users,
+  ArrowRight,
+  Calendar,
+  FileText,
+  PhoneIncoming,
+  BrainCircuit,
+  Zap,
+  Search,
+  Cpu,
+  Phone,
+  Volume2,
+  Play,
+  Pause,
+  Scan
 } from 'lucide-react';
 
 const Icon = ({ path, size = 20, strokeWidth = 2 }: { path: string | string[], size?: number, strokeWidth?: number }) => (
@@ -109,17 +122,185 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
   const isRecognitionActive = useRef(false);
   const isStartingRef = useRef(false);
 
-  const safeStartRecognition = useCallback(() => {
-    if (recognitionRef.current && !isRecognitionActive.current && !isStartingRef.current && voiceAiOn && !isSpeaking) {
-      try {
-        isStartingRef.current = true;
-        recognitionRef.current.start();
-      } catch (e) {
-        isStartingRef.current = false;
-        // If it fails with "already started", we just wait for the next attempt
-      }
+  const stopAiAudio = () => {
+    stopSpeaking();
+    setIsSpeaking(false);
+    setIsReadingAloud(false);
+  };
+
+  const handleReadAloud = async (text: string) => {
+    if (!text.trim()) return;
+    if (isReadingAloud) {
+      stopAiAudio();
+      return;
     }
-  }, [voiceAiOn, isSpeaking]);
+
+    setIsReadingAloud(true);
+    try {
+      const success = await speakWithGemini(text, user.gemini_api_key || undefined);
+      if (!success) {
+        // Fallback to window.speechSynthesis if Gemini voice fails
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.onend = () => setIsReadingAloud(false);
+        window.speechSynthesis.speak(utterance);
+      } else {
+        // We don't have an onend for speakWithGemini usually, but we can approximate or just leave it active
+        // For simplicity, let's assume it finishes or user stops it.
+        // If speakWithGemini uses an <audio> tag internally, we might need a way to track it.
+        // For now, we'll just keep the state true until they stop it or a timeout.
+        setTimeout(() => setIsReadingAloud(false), text.length * 100); 
+      }
+    } catch (e) {
+      console.error("Read aloud failed", e);
+      setIsReadingAloud(false);
+    }
+  };
+
+  const sendConsult = async (inputText?: string) => {
+    const textToProcess = (inputText || consoleInput).trim();
+    if (!textToProcess || consoleLoading) return;
+    if (activeBrain === 'gemini' && !user.gemini_api_key) {
+      setShowApiKeyModal(true);
+      return;
+    }
+    const text = textToProcess; 
+    if (!inputText) setConsoleInput('');
+    setChatHistory(h => [...h, { role: 'user', text, id: Date.now() }]);
+    if (voiceAiOn) setVoiceAiReply("Thinking...");
+    setConsoleLoading(true);
+    try {
+      let reply: string = "";
+      let usedFallback = false;
+
+      if (activeBrain === 'gemini') {
+        try {
+          if (!user.gemini_api_key) throw new Error("No Key");
+          reply = await consultGemini(text, chatHistory, user.gemini_api_key) || "";
+        } catch (e) {
+          console.warn("Gemini Primary failed, trying local fallback:", e);
+          if (brain2Ready || brain1Ready) {
+            usedFallback = true;
+            await new Promise(r => setTimeout(r, 1000));
+            const brainName = brain2Ready ? 'Gemma3n E4B' : 'Gemma3n E2B';
+            reply = `(Hybrid Fallback: ${brainName} Processing)\n\nI have analyzed your request regarding "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}". As your local fallback brain, I recommend the following...`;
+          } else {
+            throw e;
+          }
+        }
+      } else {
+        // Explicit local selection
+        await new Promise(r => setTimeout(r, 1500));
+        const brainName = activeBrain === 'gemma2b' ? 'Gemma3n E2B' : 'Gemma3n E4B';
+        reply = `(Local Brain: ${brainName} Processing)\n\nI have analyzed your request regarding "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}". Processing offline for maximum privacy.`;
+      }
+
+      if (reply) {
+        setChatHistory(h => [...h, { role: 'ai', text: reply, id: Date.now() }]);
+        if (voiceAiOn) {
+          setVoiceAiReply("Generating audio...");
+          setIsSpeaking(true);
+          // Pass undefined if no key, so it uses environment key or fallback
+          speakWithGemini(reply, user.gemini_api_key || undefined)
+            .then(success => {
+              if (success) {
+                setVoiceAiReply(reply.slice(0, 100) + '...');
+              } else {
+                setVoiceAiReply("Voice guidance unavailable for this response.");
+              }
+            })
+            .catch(err => {
+              console.error("Voice error:", err);
+              setVoiceAiReply("Voice engine error. Please check internet connection.");
+            })
+            .finally(() => setIsSpeaking(false));
+        }
+      } else {
+        throw new Error("No reply from AI");
+      }
+    } catch (err) {
+      console.error("Consult error:", err);
+      setChatHistory(h => [...h, { role: 'ai', text: 'AI service unavailable. Please check your connection or API key.', id: Date.now() }]);
+    }
+    setConsoleLoading(false);
+  };
+
+  const safeStartRecognition = useCallback(async () => {
+    if (!voiceAiOn || isSpeaking || isStartingRef.current) return;
+    
+    // Kill any existing session first (Zombie fix)
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.abort();
+      } catch (e) {}
+      recognitionRef.current = null;
+    }
+
+    // Small delay — lets browser release the mic
+    await new Promise(r => setTimeout(r, 400));
+    if (!voiceAiOn || isSpeaking) return;
+
+    try {
+      isStartingRef.current = true;
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (!SpeechRecognition) return;
+
+      const recognition = new SpeechRecognition();
+      recognition.lang = 'en-IN';
+      recognition.continuous = false;
+      recognition.interimResults = true;
+
+      recognition.onstart = () => {
+        isRecognitionActive.current = true;
+        isStartingRef.current = false;
+      };
+
+      recognition.onresult = (event: any) => {
+        let interimTranscript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            setVoiceAiReply(transcript);
+            sendConsult(transcript);
+          } else {
+            interimTranscript += transcript;
+            setVoiceAiReply(interimTranscript);
+          }
+        }
+      };
+
+      recognition.onerror = (event: any) => {
+        isStartingRef.current = false;
+        isRecognitionActive.current = false;
+        recognitionRef.current = null;
+        if (event.error === 'no-speech' || event.error === 'aborted') return;
+        
+        console.error('Speech recognition error', event.error);
+        if (event.error === 'network' || event.error === 'not-allowed') {
+          setVoiceAiOn(false);
+        }
+      };
+
+      recognition.onend = () => {
+        isRecognitionActive.current = false;
+        isStartingRef.current = false;
+        recognitionRef.current = null;
+        
+        // Auto-restart logic
+        if (voiceAiOn && !isSpeaking) {
+          setTimeout(() => {
+            if (voiceAiOn && !isSpeaking) safeStartRecognition();
+          }, 1500);
+        }
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch (e) {
+      isStartingRef.current = false;
+    }
+  }, [voiceAiOn, isSpeaking, sendConsult]);
 
   const stopAiVoiceCompletely = useCallback(() => {
     if ('speechSynthesis' in window) {
@@ -165,35 +346,65 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
 
   const [scanPhase, setScanPhase] = useState('idle'); 
   const [scannedText, setScannedText] = useState('');
+  const [isReadingAloud, setIsReadingAloud] = useState(false);
   const [convPages, setConvPages] = useState<any[]>([]);
-  const [transSourceText, setTransSourceText] = useState('');
-  const [transResult, setTransResult] = useState('');
+  const [activeConvPage, setActiveConvPage] = useState<number | null>(null);
+  const lastGuidanceTime = useRef(0);
+
+  const provideGuidance = async (guidance: string) => {
+    // Prevent guidance spam (once every 8 seconds)
+    if (Date.now() - lastGuidanceTime.current < 8000) return;
+    lastGuidanceTime.current = Date.now();
+    
+    try {
+      await speakWithGemini(guidance, user.gemini_api_key || undefined);
+    } catch (e) {
+      console.warn("Guidance audio failed", e);
+    }
+  };
+
+  useEffect(() => {
+    if (scanPhase === 'live') {
+      const guidanceTimer = setTimeout(() => {
+        provideGuidance("Place the document within the frame. Ensure good lighting for the judicial scanner.");
+      }, 2000);
+      return () => clearTimeout(guidanceTimer);
+    }
+  }, [scanPhase]);
 
   const chatRef = useRef<HTMLDivElement>(null);
   const supportRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  const sideNav = [
-    { id: 'command', label: 'Command', icon: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" },
-    { id: 'feed', label: 'Feed', icon: "M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" },
-    { id: 'consult', label: 'Consult', icon: "M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2v4l.586-.586z" },
-    { id: 'clients', label: 'Clients', icon: "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" },
-    { id: 'knowledge-base', label: 'Knowledge', icon: "M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" },
-    { id: 'temp-instructions', label: 'Instructions', icon: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" },
-    { id: 'notifications', label: 'Notif.', icon: "M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" },
-    { id: 'support', label: 'Support', icon: "M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z" },
-    { id: 'reading-room', label: 'Read', icon: "M15 12a3 3 0 11-6 0 3 3 0 016 0z" },
-    { id: 'doc-converter', label: 'Convert', icon: "M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" },
-    { id: 'writing-desk', label: 'Writing', icon: "M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" },
-    { id: 'dialer', label: 'Dialer', icon: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" },
+  const topNav = [
+    { id: 'command', label: 'COMMAND' },
+    { id: 'feed', label: 'FEED' },
+    { id: 'consult', label: 'CONSULT' },
+    { id: 'clients', label: 'CLIENTS' },
+    { id: 'knowledge-base', label: 'KNOWLEDGE' },
+    { id: 'temp-instructions', label: 'INSTRUCTIONS' },
+    { id: 'writing-desk', label: 'DRAFTING' },
+    { id: 'notifications', label: 'NOTIF.' },
+    { id: 'support', label: 'SUPPORT' },
+    { id: 'reading-room', label: 'READ' },
+    { id: 'doc-converter', label: 'CONVERT' },
+    { id: 'brain', label: 'BRAIN' },
   ];
 
   const S = {
-    page: { display: 'flex', height: '100vh', background: '#020617', color: '#e2e8f0', overflow: 'hidden' },
-    sidebar: { width: 72, background: '#070b14', borderRight: '1px solid rgba(255,255,255,.05)', display: 'flex', flexDirection: 'column' as const, alignItems: 'center' as const, padding: '20px 0', gap: 8, flexShrink: 0, overflowY: 'auto' as const },
-    sideBtn: (active: boolean) => ({ width: 44, height: 44, borderRadius: 12, background: active ? 'rgba(245,158,11,.1)' : 'transparent', border: active ? '1px solid rgba(245,158,11,.25)' : '1px solid transparent', color: active ? '#f59e0b' : '#475569', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' as const, transition: 'all .2s' }),
-    header: { height: 56, background: '#0a0f1d', borderBottom: '1px solid rgba(255,255,255,.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', flexShrink: 0 },
-    card: { background: '#0a0f1d', borderRadius: 24, padding: 28, border: '1px solid rgba(255,255,255,.05)' },
+    page: { display: 'flex', flexDirection: 'column' as const, height: '100vh', background: '#070b14', color: '#e2e8f0', overflow: 'hidden' },
+    header: { height: 60, background: '#0a0f1d', borderBottom: '1px solid rgba(255,255,255,.05)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', flexShrink: 0 },
+    navbar: { 
+      height: 56, 
+      background: '#070b14', 
+      borderBottom: '1px solid rgba(255,255,255,.05)', 
+      display: 'flex', 
+      alignItems: 'center', 
+      padding: '0 24px', 
+      overflowX: 'auto' as const,
+      flexShrink: 0,
+    },
+    card: { background: '#0a0f1d', borderRadius: 24, padding: 28, border: '1px solid rgba(255,255,255,0.03)' },
   };
 
   const startScan = async () => {
@@ -207,6 +418,67 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
       setScanPhase('live');
     } catch {
       setScanPhase('error');
+    }
+  };
+
+  const captureScan = async () => {
+    setScanPhase('scanning');
+    
+    // Provide tactile/voice feedback
+    provideGuidance("Capturing judicial record. Place it near for detail, or far for full frame. Hold perfectly still.");
+    
+    await new Promise(r => setTimeout(r, 1000));
+    
+    // Simulate Brain Selection/Fallback
+    let usedBrain = "Gemini 3 Flash (Cloud)";
+    if (!user.gemini_api_key || activeBrain !== 'gemini') {
+      usedBrain = activeBrain === 'gemma2b' ? "Gemma-2B (Local)" : "Gemma-4B (Local)";
+    }
+    
+    provideGuidance(`${usedBrain} processing started.`);
+    await new Promise(r => setTimeout(r, 1500));
+    
+    let capturedImage = '';
+    if (videoRef.current) {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth;
+      canvas.height = videoRef.current.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(videoRef.current, 0, 0);
+        capturedImage = canvas.toDataURL('image/jpeg', 0.8);
+      }
+    }
+
+    const newText = `[PROCESSED BY ${usedBrain.toUpperCase()}]\n\nLEGAL RECORD - PAGE ${convPages.length + 1}\n\nThis document has been digitized via Nexus Vision Engine.\n\n[OCR RECONSTRUCTION ACTIVE]\n\nThe text extracted suggests a legal affidavit or petition regarding survey measurements in Kerala. Physical features identified: Boundary Wall, survey stone #45.`;
+    setScannedText(newText);
+    
+    if (view === 'doc-converter') {
+      const newPage = {
+        id: Date.now(),
+        label: `Page ${convPages.length + 1}`,
+        text: newText,
+        image: capturedImage,
+        timestamp: new Date().toLocaleTimeString()
+      };
+      setConvPages(prev => [...prev, newPage]);
+      setActiveConvPage(convPages.length);
+    } else {
+      // In reading room, we can store single latest capture image if needed
+      (window as any)._lastReadScan = capturedImage;
+    }
+
+    setScanPhase('done');
+    
+    // Ask if user wants to read aloud
+    setTimeout(() => {
+      provideGuidance("Digital reconstruction complete. You want to read it aloud?");
+    }, 1200);
+
+    if (videoRef.current && videoRef.current.srcObject) {
+      const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
+      tracks.forEach(t => t.stop());
+      videoRef.current.srcObject = null;
     }
   };
 
@@ -442,79 +714,6 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
     };
   }, [voiceAiOn]);
 
-  const sendConsult = async (inputText?: string) => {
-    const textToProcess = (inputText || consoleInput).trim();
-    if (!textToProcess || consoleLoading) return;
-    if (activeBrain === 'gemini' && !user.gemini_api_key) {
-      setShowApiKeyModal(true);
-      return;
-    }
-    const text = textToProcess; 
-    if (!inputText) setConsoleInput('');
-    setChatHistory(h => [...h, { role: 'user', text, id: Date.now() }]);
-    if (voiceAiOn) setVoiceAiReply("Thinking...");
-    setConsoleLoading(true);
-    try {
-      let reply: string = "";
-      let usedFallback = false;
-
-      if (activeBrain === 'gemini') {
-        try {
-          if (!user.gemini_api_key) throw new Error("No Key");
-          reply = await consultGemini(text, chatHistory, user.gemini_api_key) || "";
-        } catch (e) {
-          console.warn("Gemini Primary failed, trying local fallback:", e);
-          if (brain2Ready || brain1Ready) {
-            usedFallback = true;
-            await new Promise(r => setTimeout(r, 1000));
-            const brainName = brain2Ready ? 'Gemma3n E4B' : 'Gemma3n E2B';
-            reply = `(Hybrid Fallback: ${brainName} Processing)\n\nI have analyzed your request regarding "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}". As your local fallback brain, I recommend the following...`;
-          } else {
-            throw e;
-          }
-        }
-      } else {
-        // Explicit local selection
-        await new Promise(r => setTimeout(r, 1500));
-        const brainName = activeBrain === 'gemma2b' ? 'Gemma3n E2B' : 'Gemma3n E4B';
-        reply = `(Local Brain: ${brainName} Processing)\n\nI have analyzed your request regarding "${text.slice(0, 50)}${text.length > 50 ? '...' : ''}". Processing offline for maximum privacy.`;
-      }
-
-      if (reply) {
-        setChatHistory(h => [...h, { role: 'ai', text: reply, id: Date.now() }]);
-        if (voiceAiOn) {
-          setVoiceAiReply("Generating audio...");
-          setIsSpeaking(true);
-          // Pass undefined if no key, so it uses environment key or fallback
-          speakWithGemini(reply, user.gemini_api_key || undefined)
-            .then(success => {
-              if (success) {
-                setVoiceAiReply(reply.slice(0, 100) + '...');
-              } else {
-                setVoiceAiReply("Voice guidance unavailable for this response.");
-              }
-            })
-            .catch(err => {
-              console.error("Voice error:", err);
-              setVoiceAiReply("Voice engine error. Please check internet connection.");
-            })
-            .finally(() => setIsSpeaking(false));
-        }
-      } else {
-        throw new Error("No reply from AI");
-      }
-    } catch (err) {
-      console.error("Consult error:", err);
-      setChatHistory(h => [...h, { role: 'ai', text: 'AI service unavailable. Please check your connection or API key.', id: Date.now() }]);
-    }
-    setConsoleLoading(false);
-  };
-
-  const stopAiAudio = () => {
-    stopSpeaking();
-    setIsSpeaking(false);
-  };
-
   useEffect(() => {
     if (voiceAiOn && !isSpeaking) {
       // Small delay to ensure synthesis has fully released audio hardware
@@ -594,254 +793,181 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
 
   return (
     <div style={S.page}>
-      <div style={S.sidebar}>
-        <div style={{ width: 44, height: 44, background: '#f59e0b', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12, flexShrink: 0 }}>
-          <span style={{ fontSize: 22, fontWeight: 900, color: '#000', fontStyle: 'italic' }}>T</span>
-        </div>
-        {sideNav.map(item => (
-          <button key={item.id} onClick={() => setView(item.id)} title={item.label} style={S.sideBtn(view === item.id)}>
-            <Icon path={item.icon} size={18} />
-          </button>
-        ))}
-      </div>
-
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <header style={S.header}>
-          <div className="flex items-center gap-4">
-            <span className="text-amber-500 font-bold uppercase text-[10px] tracking-widest">Advocate Portal</span>
-            <span className="text-slate-700">|</span>
-            <span className="text-white font-medium text-sm">{user.name || 'Advocate'}</span>
-            <span className="text-slate-700">|</span>
-            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/50 border border-slate-800">
-              <div className="flex items-center gap-1.5 border-r border-slate-800 pr-2 mr-2">
-                <div className={`w-1.5 h-1.5 rounded-full ${user.gemini_api_key ? (activeBrain === 'gemini' ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-indigo-400') : 'bg-slate-700'}`} />
-                <span className={`text-[9px] font-black uppercase tracking-widest ${user.gemini_api_key ? (activeBrain === 'gemini' ? 'text-emerald-500' : 'text-indigo-400') : 'text-slate-600'}`}>
-                  Gemini 2.5 {activeBrain === 'gemini' ? 'Primary' : 'Standby'}
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className={`w-1.5 h-1.5 rounded-full ${activeBrain !== 'gemini' ? 'bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.5)]' : (brain1Ready || brain2Ready ? 'bg-emerald-500/50' : 'bg-slate-700/50')}`} />
-                <span className={`text-[9px] font-black uppercase tracking-widest ${activeBrain !== 'gemini' ? 'text-amber-400' : 'text-slate-600'}`}>
-                  Gemma 2 {activeBrain === 'gemini' ? (brain1Ready || brain2Ready ? 'Fallback Ready' : 'Sync Required') : 'Active'}
-                </span>
+      {/* Header Bar */}
+      <header style={S.header}>
+        <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-amber-500 rounded-lg flex items-center justify-center font-black text-black italic text-xl">T</div>
+            <div className="flex flex-col">
+              <div className="flex items-baseline gap-2">
+                <span className="text-white font-black text-lg tracking-tighter uppercase italic">Nexus <span className="text-indigo-500">Justice</span></span>
+                <span className="text-[10px] text-slate-500 font-bold tracking-widest uppercase">V3.1 HYBRID</span>
               </div>
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <span style={{ fontSize: 12, fontWeight: 900, color: '#fff' }} className="hidden sm:inline">Nexus Justice <span style={{ color: '#6366f1' }}>v3.2</span></span>
-            <button 
-              onClick={onLogout}
-              className="flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-xl text-slate-400 hover:text-rose-500 hover:border-rose-500/30 transition-all text-[10px] font-bold uppercase tracking-wider"
-            >
-              <LogOut size={14} />
-              <span className="hidden md:inline">Logout</span>
-            </button>
-          </div>
-        </header>
+        </div>
 
-        <main style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
+        <div className="flex items-center gap-4">
+          {(brain1Ready || brain2Ready) && (
+            <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 animate-in fade-in slide-in-from-right-4 duration-1000">
+              <BrainCircuit size={12} className="text-amber-500" />
+              <span className="text-[9px] font-black tracking-widest text-amber-500 uppercase">Gemma is active</span>
+            </div>
+          )}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/5 border border-emerald-500/20">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="text-[9px] font-black tracking-widest text-emerald-500 uppercase text-xs">Cloud Active</span>
+          </div>
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-indigo-500/5 border border-indigo-500/20">
+            <div className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
+            <span className="text-[9px] font-black tracking-widest text-indigo-400 uppercase text-xs">{activeBrain === 'gemini' ? 'Gemini 3 Flash' : 'Local Node Active'}</span>
+          </div>
+          <button 
+            onClick={onLogout}
+            className="p-2 text-slate-500 hover:text-rose-500 transition-colors"
+          >
+            <LogOut size={18} />
+          </button>
+        </div>
+      </header>
+
+      {/* Top Navigation Sliding Bar */}
+      <nav style={S.navbar} className="nav-scrollbar select-none">
+        <div className="flex items-center h-full gap-2 pr-12 min-w-max">
+          {topNav.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setView(item.id)}
+              className={`px-8 h-full text-[10px] font-black tracking-[0.15em] uppercase transition-all relative z-10 whitespace-nowrap flex-shrink-0 ${
+                view === item.id ? 'text-indigo-400' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              {item.label}
+              {view === item.id && (
+                <motion.div 
+                  layoutId="activeNav"
+                  className="absolute bottom-0 left-0 right-0 h-[3px] bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.5)]"
+                />
+              )}
+            </button>
+          ))}
+        </div>
+      </nav>
+
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        <main style={{ flex: 1, overflowY: 'auto' }}>
           {view === 'command' && (
             <div className="p-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {!user.gemini_api_key && (
-                <motion.div 
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="col-span-full bg-rose-500/10 border-2 border-rose-500/20 rounded-[32px] p-6 flex flex-col md:flex-row items-center justify-between gap-6 shadow-[0_0_40px_rgba(244,63,94,0.05)]"
-                >
-                  <div className="flex items-center gap-4 text-center md:text-left">
-                    <div className="w-14 h-14 bg-rose-500/20 rounded-2xl flex items-center justify-center text-rose-500 shadow-lg shadow-rose-500/20">
-                      <AlertTriangle size={28} />
-                    </div>
+                <div style={S.card} className="col-span-full bg-indigo-500/10 border-indigo-500/30">
+                  <div className="flex items-center justify-between">
                     <div>
-                      <h4 className="text-lg font-black text-white italic uppercase tracking-tight">AI Engine Temporarily Offline</h4>
-                      <p className="text-xs text-rose-200/60 font-medium max-w-md">Your legal intelligence engine requires a Gemini API key. Click the "Get api key" tab in the command center below to activate.</p>
+                      <h4 className="text-indigo-400 font-black uppercase text-xs tracking-widest mb-1 italic">Action Required: AI Engine Disabled</h4>
+                      <p className="text-indigo-300 text-sm">Please provide your Gemini API key to activate the full judicial AI intelligence suite.</p>
                     </div>
-                  </div>
-                  <button 
-                    onClick={() => setShowApiKeyModal(true)}
-                    className="px-8 py-3 bg-rose-500 text-white font-black rounded-xl text-[10px] uppercase tracking-widest hover:bg-rose-400 transition-all shadow-xl shadow-rose-500/20 active:scale-95"
-                  >
-                    Activate Nexus AI
-                  </button>
-                </motion.div>
-              )}
-              <div style={S.card} className="col-span-full lg:col-span-1">
-                <h3 className="text-xl font-bold mb-4 italic text-white flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-indigo-500" />
-                  Command Center
-                </h3>
-                <div className="space-y-4">
-                  <button onClick={() => setView('consult')} className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-bold transition-all shadow-lg shadow-indigo-500/20 flex items-center justify-center gap-2">
-                    Open AI Consultant
-                  </button>
-                  <button onClick={() => setView('writing-desk')} className="w-full py-4 bg-slate-800 hover:bg-slate-700 rounded-2xl font-bold border border-slate-700 transition-all">
-                    Open Writing Desk
-                  </button>
-                  <button 
-                    onClick={() => setShowApiKeyModal(true)} 
-                    disabled={!!user.gemini_api_key}
-                    className={`w-full py-4 rounded-2xl font-bold transition-all border flex items-center justify-center gap-2 ${
-                      user.gemini_api_key 
-                        ? 'bg-slate-900 border-slate-800 text-slate-600 cursor-not-allowed opacity-50' 
-                        : 'bg-amber-500 text-slate-950 border-amber-500 shadow-lg shadow-[0_0_20px_rgba(245,158,11,0.2)] hover:bg-amber-400'
-                    }`}
-                  >
-                    {!user.gemini_api_key && <Sparkles size={16} className="animate-pulse" />}
-                    {user.gemini_api_key ? 'Get api key' : 'Get api key'}
-                  </button>
-                  <button onClick={async () => {
-                    await api.post('/api/calls/webhook', {
-                      caller: 'Raju (Client)',
-                      phone: '+91 98765 43210',
-                      status: 'incoming',
-                      advocateEmail: user.email
-                    });
-                  }} className="w-full py-4 bg-slate-900 border border-slate-800 rounded-2xl text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:text-white hover:border-slate-700 transition-all">
-                    Simulate Incoming Call
-                  </button>
-
-                  <div className="mt-4 pt-4 border-t border-slate-800">
-                    <div className="flex items-center justify-between mb-4">
-                      <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Brain Sync</h4>
-                      <div className="flex bg-slate-900 p-1 rounded-lg gap-1 border border-slate-800">
-                        <button 
-                          onClick={() => setActiveBrain('gemini')}
-                          disabled={!user.gemini_api_key}
-                          className={`px-3 py-1 rounded-md text-[8px] font-bold transition-all ${!user.gemini_api_key ? 'opacity-30 cursor-not-allowed grayscale' : activeBrain === 'gemini' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-                        >
-                          GEMINI {user.gemini_api_key ? '' : '(LOCKED)'}
-                        </button>
-                        {brain1Ready && (
-                          <button 
-                            onClick={() => setActiveBrain('gemma2b')}
-                            className={`px-3 py-1 rounded-md text-[8px] font-bold transition-all ${activeBrain === 'gemma2b' ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-                          >
-                            2B
-                          </button>
-                        )}
-                        {brain2Ready && (
-                          <button 
-                            onClick={() => setActiveBrain('gemma4b')}
-                            className={`px-3 py-1 rounded-md text-[8px] font-bold transition-all ${activeBrain === 'gemma4b' ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20' : 'text-slate-500 hover:text-slate-300'}`}
-                          >
-                            4B
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-3">
-                      {showWifiWarning && !brain2Ready && downloadingBrain === null && (
-                        <div className="col-span-full mb-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl flex flex-col gap-2">
-                          <div className="flex items-center gap-2 text-amber-500">
-                            <Wifi size={14} />
-                            <span className="text-[9px] font-black uppercase tracking-wider">Wifi Highly Recommended</span>
-                          </div>
-                          <p className="text-[8px] text-amber-500/70 leading-tight">Gemma E4B is ~2.5GB. Proceed with download?</p>
-                          <div className="flex gap-2">
-                            <button 
-                              onClick={() => {
-                                setShowWifiWarning(false);
-                                handleDownloadBrain(2, true);
-                              }}
-                              className="px-3 py-1 bg-amber-500 text-black text-[8px] font-bold rounded-lg"
-                            >
-                              START SYNC
-                            </button>
-                            <button 
-                              onClick={() => setShowWifiWarning(false)}
-                              className="px-3 py-1 bg-slate-800 text-slate-400 text-[8px] font-bold rounded-lg"
-                            >
-                              CANCEL
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      <button 
-                        onClick={() => handleDownloadBrain(1)}
-                        disabled={brain1Ready || downloadingBrain !== null}
-                        className={`group relative overflow-hidden py-4 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all flex flex-col items-center justify-center gap-2 border ${
-                          brain1Ready 
-                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30 cursor-default' 
-                            : downloadingBrain === 1
-                              ? 'bg-slate-900 border-slate-800 text-amber-500'
-                              : downloadingBrain !== null
-                                ? 'bg-slate-900/50 border-slate-800 text-slate-700 cursor-not-allowed'
-                                : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700/50 hover:border-slate-600 cursor-pointer active:scale-95 shadow-lg shadow-black/20'
-                        }`}
-                      >
-                        {downloadingBrain === 1 ? (
-                          <div className="w-full px-4">
-                            <div className="h-1 bg-slate-800 rounded-full overflow-hidden mb-2">
-                              <div className="h-full bg-amber-500 transition-all duration-300" style={{ width: `${downloadProgress}%` }} />
-                            </div>
-                            <span className="text-[8px] animate-pulse">Syncing Brain 1...</span>
-                          </div>
-                        ) : (
-                          <>
-                            <div className={`p-2 rounded-lg ${brain1Ready ? 'bg-emerald-500/20' : 'bg-slate-700 group-hover:bg-slate-600'}`}>
-                              {brain1Ready ? <CheckCircle2 size={14} /> : <Download size={14} />}
-                            </div>
-                            {brain1Ready ? 'Gemma3n E2B Ready' : 'Download Brain 1 (E2B)'}
-                          </>
-                        )}
-                      </button>
-
-                      <button 
-                        onClick={() => handleDownloadBrain(2)}
-                        disabled={brain2Ready || downloadingBrain !== null}
-                        className={`group relative overflow-hidden py-4 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all flex flex-col items-center justify-center gap-2 border ${
-                          brain2Ready 
-                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30 cursor-default' 
-                            : downloadingBrain === 2
-                                ? 'bg-slate-900 border-slate-800 text-amber-500'
-                                : downloadingBrain !== null
-                                  ? 'bg-slate-900/50 border-slate-800 text-slate-700 cursor-not-allowed'
-                                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700/50 hover:border-slate-600 cursor-pointer active:scale-95 shadow-lg shadow-black/20'
-                        }`}
-                      >
-                        {downloadingBrain === 2 ? (
-                          <div className="w-full px-4">
-                            <div className="flex items-center justify-center gap-1.5 mb-1.5">
-                              <Wifi size={10} className="text-amber-500 animate-pulse" />
-                              <span className="text-[7px] font-bold text-amber-500/70">WIFI Recommended</span>
-                            </div>
-                            <div className="h-1 bg-slate-800 rounded-full overflow-hidden mb-2">
-                              <div className="h-full bg-amber-500 transition-all duration-300" style={{ width: `${downloadProgress}%` }} />
-                            </div>
-                            <span className="text-[8px] animate-pulse">Syncing E4B (Second Brain)...</span>
-                          </div>
-                        ) : (
-                          <>
-                            <div className={`p-2 rounded-lg ${brain2Ready ? 'bg-emerald-500/20' : 'bg-slate-700 group-hover:bg-slate-600'}`}>
-                              {brain2Ready ? <CheckCircle2 size={14} /> : <Download size={14} />}
-                            </div>
-                            <div className="flex flex-col gap-1">
-                              <span>{brain2Ready ? 'Gemma3n E4B Ready' : 'Download Brain 2 (E4B)'}</span>
-                              {!brain2Ready && (
-                                <div className="flex items-center justify-center gap-1 opacity-50">
-                                  <Wifi size={8} />
-                                  <span className="text-[7px]">Wifi Required</span>
-                                </div>
-                              )}
-                            </div>
-                          </>
-                        )}
-                      </button>
-                    </div>
+                    <button onClick={() => setShowApiKeyModal(true)} className="px-6 py-2.5 bg-indigo-500 text-white font-black rounded-xl text-xs uppercase tracking-widest shadow-lg shadow-indigo-500/20">Enable Engine</button>
                   </div>
                 </div>
-              </div>
-              <div style={S.card} className="lg:col-span-2">
-                <h3 className="text-xl font-bold mb-4 italic">Recent Call Records</h3>
-                <div className="space-y-3">
-                  {voiceRecords.map((r: any) => (
-                    <div key={r.id} className="p-5 bg-slate-900/50 border border-slate-800 rounded-2xl hover:border-slate-700 transition-all cursor-pointer">
-                      <div className="flex justify-between mb-2">
-                        <span className="font-bold text-slate-200">{r.caller || r.client}</span>
-                        <span className="text-slate-500 text-xs font-mono">{(r.timestamp || r.date)?.slice(0, 10)}</span>
+              )}
+
+              <div style={S.card} className="lg:col-span-1">
+                <div className="flex items-center justify-between mb-8">
+                  <h3 className="text-xl font-black italic tracking-tight text-white uppercase"><span className="text-indigo-500">Center</span> Command</h3>
+                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                </div>
+                
+                <div className="space-y-6">
+                  <div className="p-5 bg-slate-900/50 rounded-2xl border border-slate-800 flex items-center justify-between group hover:border-indigo-500/30 transition-all cursor-pointer">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400 group-hover:scale-110 transition-transform">
+                        <Users size={18} />
                       </div>
-                      <p className="text-sm text-slate-400 leading-relaxed">{r.summary}</p>
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-0.5">Active Files</div>
+                        <div className="text-xl font-black text-white">{CLIENTS.length}</div>
+                      </div>
+                    </div>
+                    <ArrowRight size={14} className="text-slate-700" />
+                  </div>
+
+                  <div className="p-5 bg-slate-900/50 rounded-2xl border border-slate-800 flex items-center justify-between group hover:border-emerald-500/30 transition-all cursor-pointer">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+                        <Calendar size={18} />
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-0.5">Next Hearing</div>
+                        <div className="text-xl font-black text-white">Tomorrow</div>
+                      </div>
+                    </div>
+                    <ArrowRight size={14} className="text-slate-700" />
+                  </div>
+
+                  <div className="p-5 bg-slate-900/50 rounded-2xl border border-slate-800 flex items-center justify-between group hover:border-amber-500/30 transition-all cursor-pointer">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
+                        <FileText size={18} />
+                      </div>
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-0.5">Pending Drafts</div>
+                        <div className="text-xl font-black text-white">03</div>
+                      </div>
+                    </div>
+                    <ArrowRight size={14} className="text-slate-700" />
+                  </div>
+                  
+                  <button 
+                    onClick={async () => {
+                      await api.post('/api/calls/webhook', {
+                        caller: 'Raju (Client)',
+                        phone: '+91 98765 43210',
+                        status: 'incoming',
+                        advocateEmail: user.email
+                      });
+                    }}
+                    className="w-full py-4 bg-slate-900 border border-slate-800 rounded-2xl text-[10px] font-bold uppercase tracking-widest text-slate-500 hover:text-white hover:border-slate-700 transition-all"
+                  >
+                    Simulate Incoming Call
+                  </button>
+                </div>
+              </div>
+
+              <div style={S.card} className="lg:col-span-2 flex flex-col">
+                <div className="flex items-center justify-between mb-8">
+                  <h3 className="text-xl font-black italic tracking-tight text-white uppercase">Call <span className="text-indigo-500">Transcripts</span></h3>
+                  <button onClick={() => setView('dialer')} className="text-[10px] font-black text-indigo-400 uppercase tracking-widest hover:text-indigo-300">Open Dialer</button>
+                </div>
+                <div className="flex-1 space-y-3 overflow-y-auto max-h-[480px] no-scrollbar">
+                  {voiceRecords.length === 0 && (
+                    <div className="flex flex-col items-center justify-center h-full text-slate-600 italic py-20">
+                      <PhoneIncoming size={32} className="mb-4 opacity-20" />
+                      <p className="text-xs uppercase tracking-widest font-black">No recent intercepted calls</p>
+                    </div>
+                  )}
+                  {voiceRecords.map((r: any) => (
+                    <div key={r.id} className="p-5 bg-slate-900/50 border border-slate-800 rounded-2xl hover:border-slate-700 transition-all group">
+                      <div className="flex justify-between items-start mb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 font-bold text-xs uppercase italic">
+                            {r.caller?.slice(0, 1) || 'U'}
+                          </div>
+                          <div>
+                            <div className="font-bold text-white text-sm tracking-tight">{r.caller || 'Unknown Caller'}</div>
+                            <div className="text-[9px] text-indigo-500 font-black uppercase tracking-widest">{r.client || 'Prospective Client'}</div>
+                          </div>
+                        </div>
+                        <span className="text-slate-500 text-[9px] font-mono font-bold">{(r.timestamp || r.date)?.slice(0, 10)}</span>
+                      </div>
+                      <div className="p-3 bg-black/30 rounded-xl border border-slate-800/50 mb-3">
+                        <p className="text-xs text-slate-400 leading-relaxed italic line-clamp-2">"{r.summary}"</p>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2">
+                          <Sparkles size={10} className="text-indigo-400" />
+                          <span className="text-[8px] font-black uppercase tracking-[0.2em] text-slate-500 text-xs">AI Analyzed</span>
+                        </div>
+                        <button className="ml-auto text-[9px] font-black uppercase tracking-widest text-indigo-400 opacity-0 group-hover:opacity-100 transition-all">Review Transcript</button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -849,24 +975,163 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
             </div>
           )}
 
-          {view === 'feed' && (
-            <div className="p-8 space-y-6">
-              <h2 className="text-2xl font-bold italic">Hearing Feed</h2>
-              <div style={S.card}>
-                <div className="space-y-4">
-                  {CLIENTS.slice(0, 3).map(c => (
-                    <div key={c.slNo} className="flex items-center justify-between p-4 border-b border-slate-800 last:border-0">
-                      <div>
-                        <div className="font-bold">{c.name}</div>
-                        <div className="text-xs text-slate-500">{c.caseNumber} · {c.courtName}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-emerald-500 font-bold text-sm">{c.nextPostingDate}</div>
-                        <div className="text-[10px] text-slate-500 uppercase tracking-wider">{c.purposeOfPosting}</div>
-                      </div>
-                    </div>
-                  ))}
+          {view === 'brain' && (
+            <div className="p-8 flex flex-col items-center justify-center min-h-full max-w-4xl mx-auto">
+              <div style={S.card} className="w-full relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+                   <Icon path="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" size={120} />
                 </div>
+                
+                <h2 className="text-3xl font-black italic tracking-tighter text-white uppercase mb-4">Neural <span className="text-indigo-500">Synchronizer</span></h2>
+                <p className="text-slate-400 text-sm leading-relaxed mb-8 max-w-2xl font-medium">To operate without external connectivity and ensure 100% data sovereignty, Nexus Justice can run locally. Securely download the legal model weights to your device below.</p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative z-10">
+                  <div className="p-6 bg-slate-900 rounded-3xl border border-slate-800 flex flex-col gap-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400">
+                          <BrainCircuit size={20} />
+                        </div>
+                        <div>
+                          <div className="text-lg font-black tracking-tight uppercase italic text-white leading-none mb-1">Gemma-2B</div>
+                          <div className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Efficiency Engine</div>
+                        </div>
+                      </div>
+                      {brain1Ready && <div className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 rounded text-[8px] font-black uppercase tracking-widest">Active</div>}
+                    </div>
+                    
+                    <div className="flex items-center justify-between mb-2">
+                       <span className="text-[10px] font-black text-slate-500 uppercase">Provider</span>
+                       <span className="text-[10px] font-black text-indigo-400 uppercase">Google / Gemma</span>
+                    </div>
+
+                    <button 
+                        onClick={() => handleDownloadBrain(1)}
+                        disabled={brain1Ready || downloadingBrain !== null}
+                        className={`py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex flex-col items-center justify-center gap-2 border ${
+                          brain1Ready 
+                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30 cursor-default' 
+                            : downloadingBrain === 1
+                                ? 'bg-slate-900 border-white/10 text-indigo-400 animate-pulse'
+                                : 'bg-white text-black hover:scale-105 transition-transform'
+                        }`}
+                      >
+                        {downloadingBrain === 1 ? (
+                          <div className="w-full px-4 text-center">
+                            <span className="text-[8px] animate-pulse">Syncing Weights ({Math.round(downloadProgress)}%)...</span>
+                          </div>
+                        ) : brain1Ready ? 'Weights Synchronized' : 'Download Brain1'}
+                    </button>
+                    
+                    <div className="flex justify-center gap-2">
+                       <button onClick={() => setActiveBrain('gemma2b')} disabled={!brain1Ready} className={`px-4 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${activeBrain === 'gemma2b' ? 'bg-indigo-500 text-white' : 'bg-slate-800 text-slate-500 hover:text-slate-300'}`}>Use 2B Engine</button>
+                    </div>
+                  </div>
+
+                  <div className="p-6 bg-slate-900 rounded-3xl border border-slate-800 flex flex-col gap-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-amber-500/10 rounded-xl flex items-center justify-center text-amber-500">
+                          <Zap size={20} />
+                        </div>
+                        <div>
+                          <div className="text-lg font-black tracking-tight uppercase italic text-white leading-none mb-1">Gemma-4B</div>
+                          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Power Engine</div>
+                        </div>
+                      </div>
+                      {brain2Ready && <div className="px-2 py-0.5 bg-emerald-500/10 text-emerald-500 rounded text-[8px] font-black uppercase tracking-widest">Active</div>}
+                    </div>
+
+                    <div className="flex items-center justify-between mb-2">
+                       <span className="text-[10px] font-black text-slate-500 uppercase">Provider</span>
+                       <span className="text-[10px] font-black text-amber-400 uppercase">Google / Gemma</span>
+                    </div>
+                    
+                    <button 
+                        onClick={() => handleDownloadBrain(2)}
+                        disabled={brain2Ready || downloadingBrain !== null}
+                        className={`py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all flex flex-col items-center justify-center gap-2 border ${
+                          brain2Ready 
+                            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/30 cursor-default' 
+                            : downloadingBrain === 2
+                                ? 'bg-slate-900 border-white/10 text-amber-500 animate-pulse'
+                                : 'bg-slate-800 text-white border-slate-700 hover:bg-slate-700'
+                        }`}
+                      >
+                        {downloadingBrain === 2 ? (
+                          <div className="w-full px-4 text-center">
+                            <span className="text-[8px] animate-pulse">Syncing Power Weights ({Math.round(downloadProgress)}%)...</span>
+                          </div>
+                        ) : brain2Ready ? 'Weights Synchronized' : 'Download Brain2'}
+                    </button>
+
+                    <div className="flex justify-center gap-2">
+                       <button onClick={() => setActiveBrain('gemma4b')} disabled={!brain2Ready} className={`px-4 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest transition-all ${activeBrain === 'gemma4b' ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-500 hover:text-slate-300'}`}>Use 4B Engine</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-10 p-5 bg-amber-500/5 border border-amber-500/20 rounded-2xl flex items-start gap-4">
+                  <div className="text-amber-500 p-1"><AlertTriangle size={18} /></div>
+                  <div>
+                    <h5 className="text-[10px] font-black uppercase tracking-widest text-amber-500 mb-1">Performance Notice</h5>
+                    <p className="text-xs text-amber-500/70 leading-relaxed italic">Local inference requires significant device RAM and Battery resource. Using WIFI for the initial weight synchronization is mandatory (approx 1.5GB - 3.8GB transfers).</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {view === 'feed' && (
+            <div className="p-8 space-y-8">
+              <div className="flex items-center justify-between">
+                <h2 className="text-3xl font-black italic tracking-tighter text-white uppercase italic">Judicial <span className="text-indigo-500">Intelligence</span> Feed</h2>
+                <div className="flex items-center gap-2 px-4 py-2 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
+                  <Sparkles size={14} className="text-indigo-400" />
+                  <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400">AI Daily Briefing</span>
+                </div>
+              </div>
+              
+              <div style={S.card} className="bg-indigo-500/5 border-indigo-500/20">
+                <h3 className="text-xs font-black uppercase tracking-[0.2em] text-indigo-400 mb-4 flex items-center gap-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                  Strategic Summary
+                </h3>
+                <p className="text-sm text-slate-300 leading-relaxed italic font-medium">
+                  Analysis indicates 3 critical hearings tomorrow. "State vs Ramesh" requires immediate review of the rebuttal evidence. AI suggests focusing on the procedural irregularity in the cross-examination transcript.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                 {CLIENTS.slice(0, 4).map(c => (
+                   <div key={c.slNo} style={S.card} className="group hover:border-indigo-500/30 transition-all">
+                      <div className="flex justify-between items-start mb-6">
+                        <div>
+                          <div className="text-lg font-black text-white tracking-tight leading-none mb-1 group-hover:text-indigo-400 transition-colors uppercase italic">{c.name}</div>
+                          <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{c.caseNumber}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-emerald-500 font-black text-xs uppercase tracking-widest mb-1 italic">POSTING: {c.nextPostingDate}</div>
+                          <div className="px-2 py-0.5 bg-slate-900 border border-slate-800 rounded text-[8px] font-black uppercase tracking-widest text-slate-500">{c.courtName}</div>
+                        </div>
+                      </div>
+                      
+                      <div className="p-4 bg-black/40 rounded-2xl border border-slate-800/50 mb-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <BrainCircuit size={12} className="text-indigo-400" />
+                          <span className="text-[9px] font-black uppercase tracking-widest text-indigo-400">AI Task Advisory</span>
+                        </div>
+                        <p className="text-xs text-slate-400 leading-relaxed italic">Draft special leave petition regarding the {c.purposeOfPosting} stage based on recent High Court precedents.</p>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                         <div className="flex -space-x-2">
+                            {[1, 2, 3].map(i => <div key={i} className="w-6 h-6 rounded-full bg-slate-800 border-2 border-[#0a0f1d] flex items-center justify-center text-[8px] font-bold text-slate-500 italic">D</div>)}
+                         </div>
+                         <button className="text-[10px] font-black uppercase tracking-widest text-indigo-500 hover:text-indigo-400">Process Folder</button>
+                      </div>
+                   </div>
+                 ))}
               </div>
             </div>
           )}
@@ -959,33 +1224,48 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
 
           {view === 'clients' && (
             <div className="p-8">
-              <div className="flex justify-between items-center mb-8">
-                <h2 className="text-2xl font-bold italic">Client Registry</h2>
-                <button onClick={() => setAddingClient(true)} className="px-5 py-2.5 bg-amber-500 text-black font-bold rounded-xl text-xs uppercase tracking-widest">+ Add Client</button>
+              <div className="flex justify-between items-center mb-10">
+                <h2 className="text-3xl font-black italic tracking-tighter text-white uppercase italic">Registry <span className="text-indigo-500">Vault</span></h2>
+                <div className="flex gap-4">
+                  <div className="flex items-center gap-2 px-4 py-2 bg-slate-900 border border-slate-800 rounded-xl">
+                    <Search size={14} className="text-slate-600" />
+                    <input className="bg-transparent border-none outline-none text-xs font-bold uppercase tracking-widest text-white w-48" placeholder="Search Vault..." />
+                  </div>
+                  <button onClick={() => setAddingClient(true)} className="px-6 py-2.5 bg-amber-500 text-black font-black rounded-xl text-[10px] uppercase tracking-widest shadow-lg shadow-amber-500/20 active:scale-95 transition-transform">+ NEW CASE RECORD</button>
+                </div>
               </div>
-              <div style={S.card} className="overflow-hidden p-0">
+              
+              <div style={S.card} className="overflow-hidden p-0 border-slate-800/50">
                 <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-800">
-                      <th className="p-5 text-[10px] uppercase tracking-widest text-slate-500 font-bold">Client</th>
-                      <th className="p-5 text-[10px] uppercase tracking-widest text-slate-500 font-bold">Case No.</th>
-                      <th className="p-5 text-[10px] uppercase tracking-widest text-slate-500 font-bold">Next Date</th>
-                      <th className="p-5 text-[10px] uppercase tracking-widest text-slate-500 font-bold">Action</th>
+                    <tr className="bg-slate-900/50">
+                      <th className="p-6 text-[10px] uppercase tracking-[0.2em] text-slate-500 font-black">Principal / Client</th>
+                      <th className="p-6 text-[10px] uppercase tracking-[0.2em] text-slate-500 font-black">Nexus Index</th>
+                      <th className="p-6 text-[10px] uppercase tracking-[0.2em] text-slate-500 font-black">Timeline Status</th>
+                      <th className="p-6 text-[10px] uppercase tracking-[0.2em] text-slate-500 font-black text-right">Synchronization</th>
                     </tr>
                   </thead>
                   <tbody>
                     {clients.map(c => (
-                      <tr key={c.slNo} className="border-b border-slate-900/50 hover:bg-slate-900/30 transition-all">
-                        <td className="p-5">
-                          <div className="font-bold text-sm">{c.name}</div>
-                          <div className="text-xs text-slate-500">{c.phone}</div>
+                      <tr key={c.slNo} className="border-b border-slate-900/50 hover:bg-indigo-500/[0.02] transition-all group">
+                        <td className="p-6">
+                          <div className="font-black text-white text-base tracking-tight mb-0.5 group-hover:text-indigo-400 transition-colors uppercase italic">{c.name}</div>
+                          <div className="text-[10px] font-bold text-slate-600 tracking-widest">{c.phone}</div>
                         </td>
-                        <td className="p-5">
-                          <span className="px-3 py-1 bg-indigo-500/10 text-indigo-400 rounded-lg text-xs font-mono font-bold border border-indigo-500/20">{c.caseNumber}</span>
+                        <td className="p-6">
+                          <div className="flex items-center gap-3">
+                            <span className="px-3 py-1 bg-slate-900 border border-slate-800 text-indigo-400 rounded-lg text-[10px] font-mono font-black">{c.caseNumber}</span>
+                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" title="Active Case" />
+                          </div>
                         </td>
-                        <td className="p-5 text-sm font-medium text-emerald-500">{c.nextPostingDate}</td>
-                        <td className="p-5">
-                          <button className="text-slate-500 hover:text-white transition-all">View Files</button>
+                        <td className="p-6">
+                           <div className="text-emerald-500 font-black text-xs uppercase tracking-widest leading-none mb-1">{c.nextPostingDate}</div>
+                           <div className="text-[9px] font-bold text-slate-600 uppercase tracking-widest">NEXT HEARING POSTED</div>
+                        </td>
+                        <td className="p-6 text-right">
+                          <button className="px-4 py-2 bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:border-slate-600 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all">
+                             Full Record
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -1078,20 +1358,85 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
           )}
 
           {view === 'reading-room' && (
-            <div className="p-8 space-y-6 h-full flex flex-col">
-              <h2 className="text-2xl font-bold italic">Reading Room</h2>
-              <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-8 overflow-hidden">
-                <div style={S.card} className="flex flex-col items-center justify-center border-dashed border-2 border-slate-800">
-                  <div className="w-20 h-20 bg-slate-900 rounded-3xl flex items-center justify-center mb-6">
-                    <Icon path="M15 12a3 3 0 11-6 0 3 3 0 016 0z" size={40} />
-                  </div>
-                  <button onClick={startScan} className="px-10 py-4 bg-emerald-600 hover:bg-emerald-500 rounded-2xl font-bold transition-all shadow-lg shadow-emerald-500/20">Start Camera OCR</button>
-                  <p className="text-xs text-slate-500 mt-6 uppercase tracking-widest font-bold">Hold document steady for scanning</p>
+            <div className="p-8 space-y-8 h-full flex flex-col">
+              <div className="flex items-center justify-between">
+                <h2 className="text-3xl font-black italic tracking-tighter text-white uppercase italic">Judicial <span className="text-indigo-500">Reader</span></h2>
+                <div className="flex gap-4">
+                  {scannedText && (
+                    <button 
+                      onClick={() => handleReadAloud(scannedText)}
+                      className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${isReadingAloud ? 'bg-indigo-500 text-white animate-pulse' : 'bg-slate-900 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500/10'}`}
+                    >
+                      {isReadingAloud ? <Pause size={14} /> : <Volume2 size={14} />}
+                      {isReadingAloud ? 'Stop Reading' : 'Read Aloud'}
+                    </button>
+                  )}
                 </div>
-                <div style={S.card} className="bg-slate-950/50 flex flex-col">
-                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-600 mb-4">Scanned Text Output</h4>
-                  <div className="flex-1 overflow-y-auto font-mono text-sm text-slate-400 leading-relaxed italic">
-                    {scannedText || "Scanning results will appear here..."}
+              </div>
+              
+              <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-8 overflow-hidden">
+                <div style={S.card} className="relative overflow-hidden flex flex-col items-center justify-center bg-black border-2 border-slate-800 min-h-[500px]">
+                  {scanPhase === 'idle' || scanPhase === 'error' ? (
+                    <div className="flex flex-col items-center text-center p-12">
+                      <div className="w-24 h-24 bg-slate-900/50 rounded-[32px] flex items-center justify-center mb-8 border border-white/5">
+                        <Scan size={40} className="text-indigo-500" />
+                      </div>
+                      <h4 className="text-lg font-black text-white uppercase italic mb-2">Nexus Optical Engine</h4>
+                      <p className="text-xs text-slate-500 max-w-[240px] mb-8 leading-relaxed">Legal size document framing optimized. Align corners for best accuracy.</p>
+                      <button onClick={startScan} className="px-12 py-4 bg-indigo-600 hover:bg-indigo-500 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-xl shadow-indigo-600/20 active:scale-95">Initiate Scanner</button>
+                    </div>
+                  ) : (
+                    <div className="w-full h-full relative group">
+                      <video ref={videoRef} className="w-full h-full object-cover opacity-80" playsInline muted />
+                      <div className="absolute inset-0 border-[30px] lg:border-[60px] border-black/60 pointer-events-none" />
+                      
+                      <div className="absolute top-[10%] bottom-[10%] left-[20%] right-[20%] border-2 border-dashed border-indigo-500/30 rounded-lg pointer-events-none">
+                         <div className="absolute -top-1 -left-1 w-4 h-4 border-t-4 border-l-4 border-indigo-500" />
+                         <div className="absolute -top-1 -right-1 w-4 h-4 border-t-4 border-r-4 border-indigo-500" />
+                         <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-4 border-l-4 border-indigo-500" />
+                         <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-4 border-r-4 border-indigo-500" />
+                      </div>
+
+                      {scanPhase === 'live' && (
+                        <motion.div 
+                          animate={{ top: ['15%', '85%'] }}
+                          transition={{ duration: 2.5, repeat: Infinity, ease: "linear" }}
+                          className="absolute left-[20%] right-[20%] h-0.5 bg-indigo-400 shadow-[0_0_20px_rgba(99,102,241,1)] z-20"
+                        />
+                      )}
+                      
+                      <div className="absolute bottom-12 left-0 right-0 flex justify-center">
+                        <button 
+                          onClick={captureScan}
+                          disabled={scanPhase === 'scanning'}
+                          className={`px-12 py-4 bg-white text-black font-black uppercase text-xs tracking-widest rounded-2xl shadow-2xl transition-all active:scale-90 ${scanPhase === 'scanning' ? 'animate-pulse opacity-50' : 'hover:scale-105'}`}
+                        >
+                          {scanPhase === 'scanning' ? 'Processing...' : 'Capture Page'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div style={S.card} className="bg-slate-900/30 flex flex-col border-slate-800/50 relative">
+                  <div className="flex items-center justify-between mb-6">
+                    <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500 flex items-center gap-2">
+                       <FileText size={12} />
+                       Judicial OCR Stream
+                    </h4>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto no-scrollbar">
+                    {scannedText ? (
+                      <div className="font-serif text-lg text-slate-300 leading-relaxed p-6 bg-black/20 rounded-2xl border border-white/[0.02]">
+                        <pre className="whitespace-pre-wrap font-serif select-text">{scannedText}</pre>
+                      </div>
+                    ) : (
+                      <div className="h-full flex flex-col items-center justify-center opacity-10 py-20">
+                        <Scan size={80} className="mb-4" />
+                        <p className="text-sm font-black uppercase tracking-widest italic">Ready for Scanning</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1099,60 +1444,220 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
           )}
 
           {view === 'doc-converter' && (
-            <div className="p-8 space-y-6 h-full flex flex-col">
-              <h2 className="text-2xl font-bold italic">Document Converter</h2>
-              <div style={S.card} className="flex-1 flex flex-col items-center justify-center border-dashed border-2 border-slate-800">
-                <div className="w-16 h-16 bg-indigo-500/10 text-indigo-500 rounded-2xl flex items-center justify-center mb-6">
-                  <Icon path="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" size={32} />
-                </div>
-                <h3 className="text-lg font-bold mb-2">Multi-page Converter</h3>
-                <p className="text-sm text-slate-500 mb-8 max-w-sm text-center">Scan multiple pages, translate to Indian languages, and export as searchable PDF or Text.</p>
+            <div className="p-8 space-y-8 h-full flex flex-col">
+              <div className="flex items-center justify-between">
+                <h2 className="text-3xl font-black italic tracking-tighter text-white uppercase italic">Nexus <span className="text-amber-500">Converter</span></h2>
                 <div className="flex gap-4">
-                  <button className="px-8 py-3 bg-indigo-600 rounded-xl font-bold">Upload PDF</button>
-                  <button className="px-8 py-3 bg-slate-800 border border-slate-700 rounded-xl font-bold">Scan Pages</button>
+                   {convPages.length > 0 && (
+                    <button 
+                      onClick={() => handleReadAloud(activeConvPage !== null ? convPages[activeConvPage].text : convPages[0].text)}
+                      className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${isReadingAloud ? 'bg-amber-500 text-black animate-pulse' : 'bg-slate-900 text-amber-500 border border-amber-500/20 hover:bg-amber-500/10'}`}
+                    >
+                      {isReadingAloud ? <Pause size={14} /> : <Volume2 size={14} />}
+                      {isReadingAloud ? 'Stop Audio' : 'Read Content'}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-8 overflow-hidden">
+                <div style={S.card} className="relative overflow-hidden flex flex-col bg-slate-900/50 border-white/5 min-h-[500px]">
+                   <div className="flex items-center justify-between mb-8">
+                      <h3 className="text-xl font-black italic text-white uppercase"><span className="text-amber-500">Legal</span> Scanner</h3>
+                      <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{convPages.length} Pages Captured</div>
+                   </div>
+                   
+                   <div className="flex-1 relative bg-black rounded-[32px] overflow-hidden border border-white/[0.05]">
+                      {scanPhase === 'idle' ? (
+                        <div className="h-full flex flex-col items-center justify-center p-12 text-center">
+                            <div className="w-20 h-20 bg-amber-500/10 text-amber-500 rounded-3xl flex items-center justify-center mb-6">
+                              <Camera size={32} />
+                            </div>
+                            <h4 className="text-white font-black uppercase italic mb-4">Initial Scanner Protocol</h4>
+                            <button onClick={startScan} className="px-10 py-4 bg-amber-500 text-black font-black rounded-2xl text-xs uppercase tracking-widest shadow-xl shadow-amber-500/20">Initiate Batch Scan</button>
+                        </div>
+                      ) : (
+                        <div className="w-full h-full relative">
+                           <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
+                           <div className="absolute inset-0 border-[30px] lg:border-[50px] border-black/40" />
+                           <div className="absolute bottom-10 left-0 right-0 flex justify-center gap-4">
+                              <button onClick={captureScan} className="px-10 py-4 bg-white text-black font-black rounded-2xl text-[10px] uppercase tracking-widest shadow-2xl active:scale-95">Capture Record</button>
+                              <button onClick={() => setScanPhase('idle')} className="px-6 py-4 bg-slate-800 text-white font-black rounded-2xl text-[10px] uppercase tracking-widest">End Session</button>
+                           </div>
+                           
+                           {scanPhase === 'live' && (
+                             <motion.div 
+                               animate={{ left: ['5%', '95%'] }}
+                               transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                               className="absolute top-[5%] bottom-[5%] w-0.5 bg-amber-400 shadow-[0_0_20px_rgba(245,158,11,1)] z-10"
+                             />
+                           )}
+                        </div>
+                      )}
+                   </div>
+                </div>
+
+                <div style={S.card} className="bg-slate-900/30 border-white/5 flex flex-col overflow-hidden">
+                   <div className="flex items-center justify-between mb-8">
+                      <h3 className="text-xl font-black italic text-white uppercase"><span className="text-indigo-500">Document</span> Stack</h3>
+                      <div className="flex gap-2">
+                        {convPages.map((p, i) => (
+                           <button 
+                            key={p.id} 
+                            onClick={() => setActiveConvPage(i)}
+                            className={`w-10 h-10 rounded-xl font-black text-[10px] uppercase transition-all ${activeConvPage === i ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-500 hover:text-white border border-white/5'}`}
+                           >
+                            P{i+1}
+                           </button>
+                        ))}
+                      </div>
+                   </div>
+                   
+                   <div className="flex-1 bg-black/60 rounded-[32px] p-8 border border-white/[0.02] overflow-y-auto no-scrollbar">
+                      {activeConvPage !== null ? (
+                        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-8 h-full flex flex-col">
+                           <div className="flex items-center justify-between flex-shrink-0">
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-black uppercase text-amber-500 tracking-widest">Archival Record: Page {activeConvPage + 1}</span>
+                                <span className="text-[9px] font-bold text-slate-600 uppercase mt-1">Captured: {convPages[activeConvPage].timestamp}</span>
+                              </div>
+                              <button 
+                                onClick={() => setActiveConvPage(null)} 
+                                className="px-6 py-2 bg-slate-900 border border-white/10 rounded-xl text-[9px] font-black text-white uppercase hover:bg-slate-800 transition-all flex items-center gap-2"
+                              >
+                                <ArrowRight className="rotate-180" size={12} />
+                                Back to Batch
+                              </button>
+                           </div>
+
+                           <div className="flex-1 overflow-y-auto no-scrollbar grid grid-cols-1 xl:grid-cols-2 gap-8 pr-2">
+                              {convPages[activeConvPage].image && (
+                                <div className="rounded-2xl overflow-hidden border border-white/5 bg-black shadow-2xl group relative h-fit sticky top-0">
+                                   <img src={convPages[activeConvPage].image} className="w-full h-auto object-contain brightness-90 group-hover:brightness-100 transition-all" alt="Page Scan" />
+                                   <div className="absolute top-4 right-4 px-3 py-1 bg-black/60 backdrop-blur-md rounded-full border border-white/10 text-[8px] font-black uppercase text-amber-500 tracking-widest">Source Snapshot</div>
+                                </div>
+                              )}
+                              <div className="space-y-6">
+                                <div className="p-8 bg-amber-500/5 rounded-3xl border border-amber-500/10 min-h-full">
+                                  <div className="text-[8px] font-black text-amber-500/50 uppercase tracking-[0.3em] mb-6 flex items-center gap-2">
+                                     <BrainCircuit size={14} />
+                                     Neural Text Extraction
+                                  </div>
+                                  <pre className="whitespace-pre-wrap font-serif text-lg text-slate-300 leading-relaxed select-text italic">
+                                      {convPages[activeConvPage].text}
+                                  </pre>
+                                </div>
+                              </div>
+                           </div>
+                        </div>
+                      ) : (
+                        <div className="h-full grid grid-cols-2 md:grid-cols-3 gap-4 content-start">
+                           {convPages.length > 0 ? convPages.map((p, i) => (
+                             <button 
+                               key={p.id}
+                               onClick={() => setActiveConvPage(i)}
+                               className="aspect-[3/4] bg-slate-900/50 rounded-2xl border border-white/5 overflow-hidden group relative hover:border-indigo-500/50 transition-all"
+                             >
+                               {p.image ? (
+                                 <img src={p.image} className="w-full h-full object-cover opacity-40 group-hover:opacity-80 transition-all" alt={p.label} />
+                               ) : (
+                                 <div className="w-full h-full flex items-center justify-center">
+                                    <FileText size={24} className="text-slate-800" />
+                                 </div>
+                               )}
+                               <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black to-transparent">
+                                  <div className="text-[10px] font-black text-white uppercase tracking-widest">{p.label}</div>
+                               </div>
+                             </button>
+                           )) : (
+                             <div className="col-span-full h-full flex flex-col items-center justify-center opacity-20 py-20 grayscale">
+                                <Icon path="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" size={48} />
+                                <p className="text-[10px] font-black uppercase tracking-widest mt-4">No pages in current batch</p>
+                             </div>
+                           )}
+                        </div>
+                      )}
+                   </div>
+
+                   {convPages.length > 0 && (
+                     <div className="mt-8 flex gap-4">
+                        <button className="flex-1 py-4 bg-indigo-500 text-white font-black rounded-2xl text-[10px] uppercase tracking-widest shadow-lg shadow-indigo-600/20 active:scale-95">Compile PDF</button>
+                        <button onClick={() => setConvPages([])} className="px-6 py-4 bg-slate-900 text-rose-500 font-black rounded-2xl text-[10px] uppercase tracking-widest border border-slate-800">Clear All</button>
+                     </div>
+                   )}
                 </div>
               </div>
             </div>
           )}
 
           {view === 'writing-desk' && (
-            <div className="h-full flex flex-col">
+            <div className="h-full flex flex-col bg-[#020617]">
+               <div className="h-14 bg-slate-900 border-b border-white/5 flex items-center px-8 justify-between">
+                 <div className="flex items-center gap-4">
+                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Document Type</span>
+                    <div className="px-3 py-1 bg-slate-800 rounded-lg text-[10px] font-bold text-indigo-400 border border-indigo-500/20 uppercase tracking-widest">Criminal Appeal</div>
+                 </div>
+                 <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2 px-3 py-1 bg-indigo-500/5 border border-indigo-500/20 rounded-full">
+                       <Sparkles size={12} className="text-indigo-400" />
+                       <span className="text-[9px] font-black uppercase tracking-widest text-indigo-400">AI Drafting Active</span>
+                    </div>
+                 </div>
+               </div>
               <div className="flex-1 flex overflow-hidden">
-                <div className="flex-1 bg-slate-950 p-10 overflow-y-auto font-mono text-sm leading-relaxed">
-                  <div className="max-w-3xl mx-auto bg-white text-black p-16 shadow-2xl min-h-full rounded-sm">
-                    <pre className="whitespace-pre-wrap font-serif text-base">{draftPages[currentPage-1]}</pre>
+                <div className="flex-1 bg-black p-12 overflow-y-auto font-serif text-lg leading-relaxed no-scrollbar select-text bg-[url('https://www.transparenttextures.com/patterns/pinstripe.png')]">
+                  <div className="max-w-3xl mx-auto bg-white text-slate-900 p-20 shadow-[0_0_80px_rgba(0,0,0,0.5)] min-h-[1000px] rounded-lg border border-slate-200">
+                    <div className="mb-12 border-b-4 border-slate-900 pb-4">
+                       <h1 className="text-2xl font-black uppercase tracking-tight text-center">IN THE HIGH COURT OF JUDICATURE</h1>
+                    </div>
+                    <pre className="whitespace-pre-wrap font-serif text-lg text-slate-800 selection:bg-indigo-100 selection:text-indigo-900">{draftPages[currentPage-1]}</pre>
                   </div>
                 </div>
-                <div className="w-96 bg-slate-900 border-l border-slate-800 p-8 flex flex-col gap-8 shadow-2xl">
+                <div className="w-96 bg-[#070b14] border-l border-white/5 p-8 flex flex-col gap-8 shadow-2xl overflow-y-auto no-scrollbar">
                   <div>
-                    <h3 className="font-bold text-amber-500 uppercase text-[10px] tracking-[0.2em] mb-6">AI Drafting Assistant</h3>
+                    <div className="flex items-center justify-between mb-8">
+                       <h3 className="font-black text-indigo-500 uppercase text-[10px] tracking-[0.2em]">Cortex Suggestions</h3>
+                       <div className="text-[9px] font-black text-slate-600 uppercase">3 New</div>
+                    </div>
                     <div className="space-y-4">
                       {draftSuggestions.map(s => (
-                        <div key={s.id} className="p-5 bg-slate-800/50 rounded-2xl border border-slate-700 hover:border-slate-600 transition-all">
-                          <div className="flex items-center gap-2 mb-3">
-                            <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded ${s.type === 'add' ? 'bg-emerald-500/20 text-emerald-500' : 'bg-rose-500/20 text-rose-500'}`}>{s.type}</span>
-                            <span className="text-[9px] text-slate-500 font-bold">{s.line}</span>
+                        <div key={s.id} className="p-6 bg-slate-900/50 rounded-3xl border border-white/[0.03] hover:border-indigo-500/30 transition-all group active:scale-[0.98]">
+                          <div className="flex items-center gap-3 mb-4">
+                            <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full ${s.type === 'add' ? 'bg-emerald-500 text-black' : 'bg-rose-500 text-white'}`}>{s.type}</span>
+                            <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Near Line {s.line}</span>
                           </div>
-                          <p className="text-xs text-slate-300 leading-relaxed mb-4">{s.text}</p>
+                          <p className="text-xs text-slate-300 leading-normal font-medium mb-6 italic">"{s.text}"</p>
                           <div className="flex gap-2">
-                            <button className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all">Accept</button>
-                            <button className="flex-1 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-[10px] font-bold uppercase tracking-wider transition-all">Reject</button>
+                            <button className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[9px] font-black uppercase tracking-widest transition-all shadow-lg shadow-indigo-500/10 active:scale-95">Incorporate</button>
+                            <button className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-500 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all active:scale-95">Skip</button>
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
+                  
+                  <div className="mt-auto p-6 bg-indigo-500/5 border border-indigo-500/20 rounded-3xl">
+                     <div className="flex items-center gap-2 mb-3">
+                        <Zap size={14} className="text-indigo-400" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400 leading-none">Auto-Refine</span>
+                     </div>
+                     <p className="text-[10px] text-slate-500 leading-relaxed italic">Nexus is scanning for legal inconsistencies and formatting errors in the current draft pages.</p>
+                  </div>
                 </div>
               </div>
-              <div className="h-20 bg-slate-900 border-t border-slate-800 flex items-center px-8 justify-between">
-                <div className="flex gap-2">
-                  {draftPages.map((_, i) => (
-                    <button key={i} onClick={() => setCurrentPage(i+1)} className={`w-10 h-10 rounded-xl font-bold text-xs transition-all ${currentPage === i+1 ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20 scale-110' : 'bg-slate-800 text-slate-500 hover:text-slate-300'}`}>{i+1}</button>
-                  ))}
-                  <button className="w-10 h-10 rounded-xl bg-slate-800 text-emerald-500 font-bold hover:bg-slate-700 transition-all">+</button>
-                </div>
+              <div className="h-20 bg-[#070b14] border-t border-white/5 flex items-center px-8 justify-between">
                 <div className="flex gap-3">
-                  <button className="px-6 py-2.5 bg-indigo-600 rounded-xl text-xs font-bold uppercase tracking-widest">Export Draft</button>
+                  {draftPages.map((_, i) => (
+                    <button key={i} onClick={() => setCurrentPage(i+1)} className={`w-10 h-10 rounded-xl font-black text-xs transition-all ${currentPage === i+1 ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20 scale-110' : 'bg-slate-900 text-slate-600 hover:text-slate-300 border border-white/5'}`}>{i+1}</button>
+                  ))}
+                  <button className="w-10 h-10 rounded-xl bg-slate-900 text-indigo-500 font-black hover:bg-slate-800 transition-all border border-white/5">+</button>
+                </div>
+                <div className="flex gap-4">
+                  <button className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 border border-white/5 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-white transition-all">
+                     <Download size={14} />
+                     Save PDF
+                  </button>
+                  <button className="px-8 py-2.5 bg-white text-black rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-white/5 hover:scale-105 active:scale-95 transition-all">Submit to Registry</button>
                 </div>
               </div>
             </div>

@@ -67,6 +67,28 @@ body {
   @apply bg-slate-950 p-4 rounded-xl border border-slate-800 overflow-x-auto mb-4;
 }
 
-.prose blockquote {
-  @apply border-l-4 border-indigo-500 pl-4 italic text-slate-400 my-4;
+/* Custom Nav Scrollbar */
+.nav-scrollbar::-webkit-scrollbar {
+  height: 4px;
+}
+
+.nav-scrollbar::-webkit-scrollbar-track {
+  background: #070b14;
+}
+
+.nav-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(99, 102, 241, 0.2);
+  border-radius: 10px;
+}
+
+.nav-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(99, 102, 241, 0.4);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
