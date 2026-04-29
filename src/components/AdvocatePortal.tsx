@@ -106,6 +106,7 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
   const [welcomeSpoken, setWelcomeSpoken] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [sttError, setSttError] = useState<string | null>(null);
 
   const [brain1Ready, setBrain1Ready] = useState(false);
   const [brain2Ready, setBrain2Ready] = useState(false);
@@ -274,11 +275,21 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
         isStartingRef.current = false;
         isRecognitionActive.current = false;
         recognitionRef.current = null;
+        
         if (event.error === 'no-speech' || event.error === 'aborted') return;
         
         console.error('Speech recognition error', event.error);
-        if (event.error === 'network' || event.error === 'not-allowed') {
+        if (event.error === 'network') {
+          setSttError("Internet connection lost. Speech recognition requires an active network.");
           setVoiceAiOn(false);
+        } else if (event.error === 'not-allowed') {
+          setSttError("Microphone permission denied. Please enable it in your browser settings.");
+          setVoiceAiOn(false);
+        } else if (event.error === 'audio-capture') {
+          setSttError("Microphone not found or busy. Please check your physical hardware.");
+          setVoiceAiOn(false);
+        } else {
+          setSttError(`Speech recognition error: ${event.error}`);
         }
       };
 
@@ -614,65 +625,7 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
           // Speech Recognition Setup
           const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
           if (SpeechRecognition) {
-            recognition = new SpeechRecognition();
-            recognition.continuous = false; 
-            recognition.interimResults = true;
-            recognition.lang = 'en-IN';
-
-            recognition.onstart = () => {
-              isRecognitionActive.current = true;
-              isStartingRef.current = false;
-            };
-
-            recognition.onresult = (event: any) => {
-              let interimTranscript = '';
-              for (let i = event.resultIndex; i < event.results.length; ++i) {
-                const transcript = event.results[i][0].transcript;
-                if (event.results[i].isFinal) {
-                  setVoiceAiReply(transcript);
-                  sendConsult(transcript);
-                } else {
-                  interimTranscript += transcript;
-                  setVoiceAiReply(interimTranscript);
-                }
-              }
-            };
-
-            recognition.onerror = (event: any) => {
-              if (event.error === 'no-speech') {
-                // Ignore no-speech errors to reduce console noise
-                return;
-              }
-              console.error('Speech recognition error', event.error);
-            };
-
-            recognition.onend = () => {
-              isRecognitionActive.current = false;
-              isStartingRef.current = false;
-              // Only restart if voice AI is actually on and NOT currently speaking
-              if (voiceAiOn && !isSpeaking) {
-                // Add a bigger delay before restart to prevent tight loops and aborted errors
-                const timer = setTimeout(() => {
-                  if (recognitionRef.current && voiceAiOn && !isSpeaking) safeStartRecognition();
-                }, 1500);
-                return () => clearTimeout(timer);
-              }
-            };
-            
-            recognition.onerror = (event: any) => {
-              isStartingRef.current = false;
-              if (event.error === 'aborted') {
-                isRecognitionActive.current = false;
-              } else if (event.error === 'network') {
-                console.warn('Speech Recognition Network Error, stopping engine');
-                setVoiceAiOn(false);
-              } else if (event.error === 'not-allowed') {
-                console.warn('Speech Recognition Permission Denied');
-                setVoiceAiOn(false);
-              }
-            };
-
-            recognitionRef.current = recognition;
+            setSttError(null);
             if (voiceAiOn) safeStartRecognition();
           } else {
             console.warn("Speech recognition not supported in this browser.");
@@ -682,6 +635,7 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
           setVoiceAiListening(true);
         } catch (err) {
           console.error("Mic access denied:", err);
+          setSttError("Microphone access denied or hardware error.");
           setVoiceAiOn(false);
         }
       } else {
@@ -1799,9 +1753,16 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
               </div>
               <div className="space-y-1">
                 <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">{isSpeaking ? 'AI Guidance' : 'Last Command'}</p>
-                <p className="text-sm text-slate-200 leading-relaxed italic font-medium">
-                  {voiceAiReply || (micLevel > 10 ? 'Transcribing legal query...' : 'Listening for your command...')}
-                </p>
+                {sttError ? (
+                  <p className="text-xs text-rose-500 font-bold bg-rose-500/10 p-2 rounded-lg border border-rose-500/20 flex items-center gap-2">
+                    <AlertTriangle size={12} />
+                    {sttError}
+                  </p>
+                ) : (
+                  <p className="text-sm text-slate-200 leading-relaxed italic font-medium">
+                    {voiceAiReply || (micLevel > 10 ? 'Transcribing legal query...' : 'Listening for your command...')}
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -1812,6 +1773,7 @@ export default function AdvocatePortal({ user, onLogout, onUpdateUser }: { user:
             <button 
               onClick={() => { 
                 const newState = !voiceAiOn;
+                setSttError(null);
                 setVoiceAiOn(newState); 
                 setView('consult');
                 if (newState && 'speechSynthesis' in window) {
