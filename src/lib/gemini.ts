@@ -1,7 +1,9 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 
 export function getGemini(apiKey?: string) {
-  const key = apiKey || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined);
+  const key = apiKey || 
+              (import.meta as any).env?.VITE_GEMINI_API_KEY || 
+              (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined);
   if (!key) return null;
   return new GoogleGenAI({ apiKey: key });
 }
@@ -38,42 +40,46 @@ export async function speakWithGemini(text: string, apiKey?: string): Promise<bo
     const cleanText = text.replace(/\*/g, '').replace(/#/g, '').replace(/_{1,2}/g, '').trim();
     
     const startSpeaking = () => {
-      // Force resume in case it's paused
+      // Force resume and cancel current queue to clear any 'hanging' state
       if (window.speechSynthesis.paused) {
         window.speechSynthesis.resume();
       }
+      window.speechSynthesis.cancel();
 
-      const utterance = new SpeechSynthesisUtterance(cleanText);
-      
-      // Try to find a high-quality voice
-      const voices = window.speechSynthesis.getVoices();
-      console.log(`Available voices: ${voices.length}`);
-      
-      const preferredVoice = voices.find(v => 
-        (v.name.includes('Google') || v.name.includes('Neural')) && 
-        (v.lang.startsWith('en-IN') || v.lang.startsWith('en-GB') || v.lang.startsWith('en-US'))
-      ) || voices.find(v => v.lang.startsWith('en')) || voices[0];
+      // Small delay after cancel ensures the engine has been reset
+      setTimeout(() => {
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        
+        // Try to find a high-quality voice
+        const voices = window.speechSynthesis.getVoices();
+        console.log(`Available voices: ${voices.length}`);
+        
+        const preferredVoice = voices.find(v => 
+          (v.name.includes('Google') || v.name.includes('Neural')) && 
+          (v.lang.startsWith('en-IN') || v.lang.startsWith('en-GB') || v.lang.startsWith('en-US'))
+        ) || voices.find(v => v.lang.startsWith('en')) || voices[0];
 
-      if (preferredVoice) {
-        console.log(`Using voice: ${preferredVoice.name}`);
-        utterance.voice = preferredVoice;
-      }
+        if (preferredVoice) {
+          console.log(`Using voice: ${preferredVoice.name}`);
+          utterance.voice = preferredVoice;
+        }
 
-      utterance.volume = 1.0;
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
+        utterance.volume = 1.0;
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
 
-      utterance.onstart = () => console.log("Speech started");
-      utterance.onend = () => {
-        console.log("Speech ended");
-        resolve(true);
-      };
-      utterance.onerror = (e) => {
-        console.error("SpeechSynthesis Error:", e);
-        resolve(false);
-      };
+        utterance.onstart = () => console.log("Speech started");
+        utterance.onend = () => {
+          console.log("Speech ended");
+          resolve(true);
+        };
+        utterance.onerror = (e) => {
+          console.error("SpeechSynthesis Error:", e);
+          resolve(false);
+        };
 
-      window.speechSynthesis.speak(utterance);
+        window.speechSynthesis.speak(utterance);
+      }, 100);
     };
 
     // If voices are not loaded yet, wait for them
